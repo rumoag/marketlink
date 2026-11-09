@@ -1,0 +1,30 @@
+@import 'tailwindcss';
+
+:root {
+  --color-fondo: #fafaf7;
+  --color-texto: #1c1b1a;
+  --color-texto-suave: #4a4743;
+  --color-acento: #1d4ed8;
+  --color-acento-texto: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-fondo: #141312;
+    --color-texto: #f3f1ee;
+    --color-texto-suave: #c4bfb8;
+    --color-acento: #93b4ff;
+    --color-acento-texto: #0b1a40;
+  }
+}
+
+body {
+  background: var(--color-fondo);
+  color: var(--color-texto);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+}

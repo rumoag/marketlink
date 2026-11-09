@@ -1,0 +1,8 @@
+node_modules
+.next
+coverage
+package-lock.json
+sbom.cdx.json
+playwright-report
+test-results
+scripts/spike/out

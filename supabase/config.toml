@@ -1,0 +1,13 @@
+# Configuracion minima de Supabase CLI para desarrollo local (se amplia en U2 con Auth).
+project_id = "marketlink"
+
+[api]
+enabled = true
+
+[db]
+port = 54322
+major_version = 17
+
+[storage]
+enabled = true
+file_size_limit = "5MiB"

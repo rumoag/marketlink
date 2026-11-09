@@ -1,0 +1,224 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Permisos minimos (SECURITY-08): solo lectura del repositorio.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Valores de prueba para compilar y probar; nunca secretos reales.
+  APP_ENV: sandbox
+  INTERNAL_JOBS_SECRET: ci-jobs-secret-0123456789-0123456789-abc
+  RATE_LIMIT_SALT: ci-salt-secret-0123456789-0123456789-abc
+  MONITOR_SECRET: ci-monitor-secret-0123456789-0123456789
+  LOG_LEVEL: warn
+  SESSION_COOKIE_SECRET: ci-cookie-secret-0123456789-0123456789
+  TRACKING_TOKEN_SECRET: ci-tracking-secret-0123456789-0123456789
+
+jobs:
+  quality:
+    name: Calidad (tipos, lint, pruebas, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # Acciones fijadas por SHA (SECURITY-10). Dependabot propone las actualizaciones.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - name: Pruebas unitarias y de propiedades (la semilla de fast-check queda en el registro)
+        run: npm run test:coverage
+      - run: npm run build
+        env:
+          DATABASE_URL: postgres://build:build@localhost:5432/build
+
+  integration:
+    name: Integracion (Postgres real)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: marketlink_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/marketlink_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:integration
+
+  restore:
+    name: Copia y restauracion (volcado, cifrado, restauracion y comprobaciones)
+    needs: [quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: restore_source
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PASS: ci-backup-passphrase-0123456789
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Esquema de origen
+        run: node scripts/db/apply-migrations.mjs
+        env:
+          ADMIN_DATABASE_URL: postgres://postgres:postgres@localhost:5432/restore_source
+      - name: Volcado cifrado, descifrado y restauracion (misma cadena que la copia real)
+        run: |
+          set -euo pipefail
+          dump() {
+            docker run --rm --network host postgres:17 \
+              pg_dump "postgres://postgres:postgres@localhost:5432/restore_source" \
+              --no-owner --no-privileges --format=custom \
+              | gpg --batch --yes --symmetric --cipher-algo AES256 --pinentry-mode loopback \
+                    --passphrase-fd 3 --output copia.gpg 3<<<"$PASS"
+            gpg --batch --yes --decrypt --pinentry-mode loopback --passphrase-fd 3 \
+              --output copia.dump copia.gpg 3<<<"$PASS"
+          }
+          restore() {
+            docker run --rm --network host postgres:17 \
+              psql "postgres://postgres:postgres@localhost:5432/postgres" -c "DROP DATABASE IF EXISTS restore_target"
+            docker run --rm --network host postgres:17 \
+              psql "postgres://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE restore_target"
+            docker run --rm --network host -v "$PWD/copia.dump:/dump:ro" postgres:17 \
+              pg_restore --no-owner --no-privileges --exit-on-error \
+              --dbname "postgres://postgres:postgres@localhost:5432/restore_target" /dump
+          }
+          dump
+          restore
+          VERIFY_DATABASE_URL="postgres://postgres:postgres@localhost:5432/restore_target" \
+            node scripts/db/verify-restore.mjs --allow-empty
+      - name: El verificador detecta un libro descuadrado
+        run: |
+          set -euo pipefail
+          docker run --rm --network host postgres:17 \
+            psql "postgres://postgres:postgres@localhost:5432/restore_target" -v ON_ERROR_STOP=1 \
+            -c "SET session_replication_role = replica; INSERT INTO ledger_entries (order_id, kind, bucket, delta_cents, entry_key) VALUES ('00000000-0000-4000-8000-0000000000aa', 'cobro', 'stripe', 1000, 'ci-descuadre-1');"
+          if VERIFY_DATABASE_URL="postgres://postgres:postgres@localhost:5432/restore_target" \
+             node scripts/db/verify-restore.mjs --allow-empty; then
+            echo "::error::El verificador debia fallar con un libro descuadrado."
+            exit 1
+          fi
+
+  e2e:
+    name: E2E (Playwright)
+    needs: [quality]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: marketlink_e2e
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://marketlink_app:apppass@localhost:5432/marketlink_e2e
+      # Modo de pruebas: dobles en proceso de Supabase y Stripe; la configuracion lo rechaza en live.
+      E2E_ENABLED: 'true'
+      APP_URL: http://127.0.0.1:3100
+      E2E_PORT: '3100'
+      # U6: operador de pruebas (secretos solo validos en CI; la configuracion rechaza E2E en live).
+      OPERATOR_EMAILS: operador@example.com,operador2@example.com,operador3@example.com,operador4@example.com
+      OPERATOR_TOTP_SECRETS: operador@example.com:JBSWY3DPEHPK3PXP,operador2@example.com:JBSWY3DPEHPK3PXP,operador3@example.com:JBSWY3DPEHPK3PXP,operador4@example.com:JBSWY3DPEHPK3PXP
+      OPERATOR_SESSION_SECRET: ci-operator-session-secret-0123456789-0123456789
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Aplicar migraciones y habilitar el rol de la aplicacion
+        run: node scripts/db/apply-migrations.mjs
+        env:
+          ADMIN_DATABASE_URL: postgres://postgres:postgres@localhost:5432/marketlink_e2e
+          APP_ROLE_PASSWORD: apppass
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+        env:
+          CI: 'true'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  security:
+    name: Cadena de suministro (auditoria, secretos, SBOM)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # gitleaks analiza el historial
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Auditoria de dependencias de produccion (falla con severidad alta o critica)
+        run: npm run audit:prod
+      - name: Informe completo de auditoria (informativo; ver docs/adr/0008-versiones.md)
+        run: npm audit --json > npm-audit-full.json || true
+      - name: Analisis de secretos con gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: SBOM CycloneDX
+        run: npm run sbom
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: supply-chain
+          path: |
+            sbom.cdx.json
+            npm-audit-full.json
+          retention-days: 30

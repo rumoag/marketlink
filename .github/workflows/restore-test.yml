@@ -1,0 +1,87 @@
+name: Restauracion de prueba
+
+# U7 (BR7-CP2): cada mes restaura la ultima copia en una base temporal y comprueba su integridad.
+# Nunca toca produccion. Falla (y GitHub avisa) si algo no cuadra.
+on:
+  schedule:
+    - cron: '0 4 3 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: restore_target
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Comprobar secretos
+        id: check
+        run: |
+          if [ -z "$BACKUP_PASSPHRASE" ]; then
+            if [ "${{ vars.BACKUP_REQUIRED }}" = "true" ]; then
+              echo "::error::BACKUP_REQUIRED=true pero falta BACKUP_PASSPHRASE."
+              exit 1
+            fi
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Sin frase de paso: se omite la restauracion de prueba."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.check.outputs.configured == 'true'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.check.outputs.configured == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+        if: steps.check.outputs.configured == 'true'
+      - name: Descargar la ultima copia correcta
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          RUN=$(gh run list --workflow=backup.yml --status=success --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -z "$RUN" ] || [ "$RUN" = "null" ]; then
+            echo "::error::No hay ninguna copia correcta que restaurar."
+            exit 1
+          fi
+          gh run download "$RUN" --dir backup
+          ls -l backup/*
+      - name: Verificar huella y descifrar
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          cd backup/*/
+          sha256sum -c marketlink.dump.gpg.sha256
+          gpg --batch --yes --decrypt --pinentry-mode loopback --passphrase-fd 3 \
+            --output "$GITHUB_WORKSPACE/marketlink.dump" marketlink.dump.gpg 3<<<"$BACKUP_PASSPHRASE"
+      - name: Restaurar en la base temporal
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          docker run --rm --network host -v "$GITHUB_WORKSPACE/marketlink.dump:/dump:ro" postgres:17 \
+            pg_restore --no-owner --no-privileges --exit-on-error \
+            --dbname "postgres://postgres:postgres@localhost:5432/restore_target" /dump
+      - name: Comprobar la integridad
+        if: steps.check.outputs.configured == 'true'
+        run: node scripts/db/verify-restore.mjs
+        env:
+          VERIFY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/restore_target

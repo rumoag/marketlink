@@ -1,0 +1,38 @@
+name: Migraciones
+
+# Sandbox: automatico al fusionar en main. Produccion: solo a mano y con la aprobacion del
+# "environment" production (revisores obligatorios configurados en GitHub). Ver RESILIENCY-03.
+on:
+  push:
+    branches: [main]
+    paths: ['supabase/migrations/**']
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Entorno destino'
+        type: choice
+        options: [sandbox, production]
+        default: sandbox
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrate-${{ inputs.target || 'sandbox' }}
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ${{ inputs.target || 'sandbox' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
+        with:
+          version: latest
+      - name: Aplicar migraciones pendientes
+        run: supabase db push --db-url "$SUPABASE_DB_URL"
+        env:
+          # Secreto del "environment": conexion con el rol propietario, solo para migrar.
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}

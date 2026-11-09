@@ -1,0 +1,19 @@
+# Secretos y resultados locales
+.env
+.env.*
+!.env.example
+
+# Dependencias y compilacion
+node_modules/
+.next/
+
+# Resultados del spike (redactados, pero no se versionan)
+scripts/spike/out/
+
+# Generados
+coverage/
+next-env.d.ts
+*.tsbuildinfo
+sbom.cdx.json
+playwright-report/
+test-results/
