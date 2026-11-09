@@ -42,6 +42,8 @@ Sin `--apply` solo lista. Con `--apply` pide escribir `APLICAR <n>` (`APLICAR LI
 
 ## Comprobación obligatoria con Stripe (la hace una persona)
 
+**Hecho el 2026-11-09 con el script del spike (cuenta v2 de prueba):** cobro de 20 € en la plataforma, transferencia de 15 € ligada al cobro, saldo disponible de 15 € en la cuenta conectada, calendario manual y pago de 10 € al banco por API. Quedan por comprobar en sandbox, con la aplicación desplegada: reembolso total y parcial antes de liquidar, rechazo tras liquidar, reenvío de eventos (idempotencia) y la disputa de prueba. Resultado en `docs/adr/0029-spike-stripe-cuentas-v2.md`.
+
 **Fase 1 (sandbox):** compra completa → entrega (panel simulado o liberación manual) → transferencia ligada al cobro a una cuenta conectada de prueba (Accounts v2: `node scripts/spike/spike-stripe.mjs --account`) → saldo disponible → pago a banco con calendario manual → reembolso total y parcial antes de liquidar → rechazo del reembolso tras liquidar → reenvío de eventos de Stripe (idempotencia) → una disputa de prueba. Anota el resultado en `docs/adr/0007-spike-u0-results.md` (P5, P6, P7).
 
 **Fase 2 (antes de M2, producción):** un ciclo real de pocos euros con una artista de prueba hasta que el dinero llega a su banco; anota fecha, importe, comisiones reales, plazo y margen calculado en `docs/quotas.md`.

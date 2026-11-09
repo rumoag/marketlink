@@ -1,6 +1,6 @@
 # Runbook: configurar Stripe Connect (cuentas de artistas)
 
-Estado: **cuentas v2 verificadas en el sandbox** (creación, enlace de onboarding, estado y calendario manual; ADR 0028). Siguen pendientes de comprobar: el onboarding completo, los eventos con una URL pública, y los puntos P6 y P7 del dinero (`dinero.md`).
+Estado: **verificado en el sandbox (2026-11-09)** con una cuenta v2 de prueba: creación, enlace de onboarding, onboarding completado (transferencias y pagos en estado `active`), cobro en la plataforma, transferencia ligada al cobro (`source_transaction`), saldo disponible en la cuenta conectada, calendario de pagos manual y pago al banco por API (ADR 0028 y 0029). Siguen pendientes: los eventos con una URL pública y el ciclo con dinero real (`dinero.md`, fase 2).
 
 ## 1. Cuenta de plataforma
 
@@ -49,4 +49,4 @@ Ver `rotacion-secretos.md`. Tras rotar `STRIPE_CONNECT_WEBHOOK_SECRET`, los even
 
 ## U5: calendario de pagos y transferencias
 
-Con `PAYOUT_MODE=manual` el adaptador fija el calendario manual de cada cuenta recién creada con la API de ajustes de saldo (`POST /v1/balance_settings` con la cuenta como actor); las existentes se actualizan con `scripts/ops/set-manual-payouts.mjs`. La plataforma transfiere al entregar y la artista retira con **Retirar**. Detalle y avisos en `dinero.md`. **Pendiente de comprobar en sandbox (P6, P7).**
+Con `PAYOUT_MODE=manual` el adaptador fija el calendario manual de cada cuenta recién creada con la API de ajustes de saldo (`POST /v1/balance_settings` con la cuenta como actor); las existentes se actualizan con `scripts/ops/set-manual-payouts.mjs`. La plataforma transfiere al entregar y la artista retira con **Retirar**. Detalle y avisos en `dinero.md`. ✅ Verificado en el sandbox (P6, P7).
