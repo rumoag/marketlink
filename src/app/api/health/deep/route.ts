@@ -28,7 +28,15 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json(r.body, { status: r.status, headers: r.headers });
   }
-  const result = await deepHealth(runtime.db);
+  const result = await deepHealth(runtime.db, (cause) => {
+    // Solo el codigo y el mensaje del error (nunca la cadena de conexion).
+    const e = cause as { code?: unknown; message?: unknown };
+    runtime.logger.warn('health_deep_database_failed', {
+      code: typeof e.code === 'string' ? e.code : undefined,
+      message: typeof e.message === 'string' ? e.message.slice(0, 200) : undefined,
+      correlationId,
+    });
+  });
   return NextResponse.json(result, {
     status: result.status === 'ok' ? 200 : 503,
     headers: { 'Cache-Control': 'no-store', 'x-correlation-id': correlationId },

@@ -713,4 +713,17 @@ describe('Secretos y salud', () => {
       checks: { database: 'fail' },
     });
   });
+
+  it('la salud profunda entrega la causa del fallo de la base para dejarla en los registros', async () => {
+    const causes: unknown[] = [];
+    const cause = new Error('password authentication failed');
+    const result = await deepHealth({ query: () => Promise.reject(cause) }, (c) => causes.push(c));
+    expect(result.checks.database).toBe('fail');
+    expect(causes).toEqual([cause]);
+    // Con la base disponible no se llama.
+    await deepHealth({ query: () => Promise.resolve({ rows: [] } as never) }, (c) =>
+      causes.push(c),
+    );
+    expect(causes).toHaveLength(1);
+  });
 });

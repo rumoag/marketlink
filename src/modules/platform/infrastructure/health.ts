@@ -19,12 +19,17 @@ const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
   ]);
 
 /** Salud profunda: comprueba la base de datos. Los proveedores se anaden en U7. */
-export const deepHealth = async (db: Pick<Db, 'query'>): Promise<DeepHealth> => {
+export const deepHealth = async (
+  db: Pick<Db, 'query'>,
+  /** Recibe la causa de un fallo de la base de datos, para dejarla en los registros. */
+  onDatabaseError?: (cause: unknown) => void,
+): Promise<DeepHealth> => {
   let database: 'ok' | 'fail' = 'ok';
   try {
     await withTimeout(db.query('SELECT 1'), 3_000);
-  } catch {
+  } catch (cause) {
     database = 'fail';
+    onDatabaseError?.(cause);
   }
   const status = database === 'ok' ? ('ok' as const) : ('degraded' as const);
   if (database !== 'ok') return { status, checks: { database } };
