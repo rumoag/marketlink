@@ -30,15 +30,20 @@ export interface AuthPort {
   signOut(accessToken: string): Promise<void>;
 }
 
-/** Evento ya verificado y reducido a lo que el dominio necesita (sin datos personales). */
+/**
+ * Evento ya verificado. Los eventos de cuenta de Stripe (Accounts v2) son «finos»: solo identifican
+ * la cuenta. El estado se consulta al procesar el trabajo (`getAccountSnapshot`), sin datos
+ * personales en lo que se guarda (BR-J9).
+ */
 export type ConnectEvent = {
   readonly id: string;
   readonly type: string;
   readonly providerAccountId: string;
-  readonly snapshot: AccountSnapshot;
+  /** Milisegundos desde la epoca en que el proveedor emitio el evento. */
+  readonly occurredAt: number;
 };
 
-/** Cobros (Stripe Connect Express). El dominio nunca ve respuestas crudas del proveedor. */
+/** Cobros (Stripe Connect, cuentas v2 con panel Express). El dominio nunca ve respuestas crudas del proveedor. */
 export interface PayoutProvider {
   createAccount(input: {
     artistId: string;

@@ -1,4 +1,4 @@
-// Pone el calendario de pagos en MANUAL en las cuentas Express ya existentes (U5, PAYOUT_MODE=manual).
+// Pone el calendario de pagos en MANUAL en las cuentas conectadas (v2) ya existentes (U5, PAYOUT_MODE=manual).
 // Las cuentas nuevas se crean ya con calendario manual (StripePayoutAdapter.createAccount).
 //
 // Uso (solo lista, no cambia nada):
@@ -7,7 +7,7 @@
 //   STRIPE_SECRET_KEY=sk_test_... node scripts/ops/set-manual-payouts.mjs --apply
 //
 // Seguridad: la clave se lee del entorno (nunca como argumento), no se imprime, y con una clave
-// «live» la confirmacion exige escribir el texto exacto. Solo toca cuentas de tipo express.
+// «live» la confirmacion exige escribir el texto exacto. Solo toca cuentas conectadas abiertas.
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import Stripe from 'stripe';
@@ -21,16 +21,18 @@ const live = key.startsWith('sk_live_');
 const apply = process.argv.includes('--apply');
 const stripe = new Stripe(key, { appInfo: { name: 'marketlink-ops' } });
 
+// Cuentas conectadas v2 (las unicas que se crean ahora): el calendario vive en los ajustes de saldo.
 const pending = [];
-for await (const account of stripe.accounts.list({ limit: 100 })) {
-  if (account.type !== 'express') continue;
-  const interval = account.settings?.payouts?.schedule?.interval;
+for await (const account of stripe.v2.core.accounts.list({ limit: 20 })) {
+  if (account.closed === true) continue;
+  const settings = await stripe.balanceSettings.retrieve({}, { stripeAccount: account.id });
+  const interval = settings.payments?.payouts?.schedule?.interval;
   if (interval === 'manual') continue;
   pending.push({ id: account.id, interval: interval ?? 'desconocido' });
 }
 
 process.stdout.write(`Modo: ${live ? 'PRODUCCION (live)' : 'pruebas (test)'}\n`);
-process.stdout.write(`Cuentas Express con calendario no manual: ${pending.length}\n`);
+process.stdout.write(`Cuentas con calendario no manual: ${pending.length}\n`);
 for (const p of pending) process.stdout.write(`  ${p.id} (${p.interval})\n`);
 
 if (!apply) {
@@ -50,9 +52,10 @@ if (answer.trim() !== expected) {
 
 let changed = 0;
 for (const p of pending) {
-  await stripe.accounts.update(p.id, {
-    settings: { payouts: { schedule: { interval: 'manual' } } },
-  });
+  await stripe.balanceSettings.update(
+    { payments: { payouts: { schedule: { interval: 'manual' } } } },
+    { stripeAccount: p.id },
+  );
   changed += 1;
   process.stdout.write(`  ${p.id} -> manual\n`);
 }

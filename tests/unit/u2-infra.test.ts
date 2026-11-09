@@ -20,7 +20,7 @@ import {
 } from '@/modules/accounts/infrastructure/session-cookie';
 import { SessionResolverImpl } from '@/modules/accounts/infrastructure/session-resolver';
 import {
-  REQUESTED_CAPABILITIES,
+  ACCOUNT_CREATION_PARAMS,
   snapshotFromAccount,
   StripePayoutAdapter,
 } from '@/modules/accounts/infrastructure/stripe-payout-adapter';
@@ -285,27 +285,55 @@ const json = (body: unknown, status = 200) =>
     headers: { 'content-type': 'application/json', 'request-id': 'req_1' },
   });
 
-describe('StripePayoutAdapter (SDK + cliente resiliente inyectado)', () => {
-  const adapter = (server: ReturnType<typeof fakeServer>) =>
+describe('StripePayoutAdapter (Accounts v2; SDK + cliente resiliente inyectado)', () => {
+  const adapter = (server: ReturnType<typeof fakeServer>, manualPayouts = false) =>
     new StripePayoutAdapter({
       secretKey: 'sk_test_0123456789abcdef',
       apiVersion: '2026-01-01',
       connectWebhookSecret: 'whsec_test_secret_0123456789',
       fetch: createResilientFetch(server.client, 'stripe', 'api'),
       now: () => 1_700_000_000_000,
+      manualPayouts,
     });
 
+  /** Forma real de `GET /v2/core/accounts/{id}` observada en el sandbox (campos usados). */
   const accountJson = (over: Record<string, unknown> = {}) => ({
     id: 'acct_123',
-    object: 'account',
-    details_submitted: true,
-    payouts_enabled: true,
-    capabilities: { transfers: 'active' },
-    requirements: { disabled_reason: null },
+    object: 'v2.core.account',
+    closed: false,
+    configuration: {
+      recipient: {
+        applied: true,
+        capabilities: {
+          stripe_balance: {
+            payouts: { status: 'active', status_details: [] },
+            stripe_transfers: { status: 'active', status_details: [] },
+          },
+        },
+      },
+    },
+    requirements: { entries: [] },
     ...over,
   });
 
-  it('crea la cuenta Express de Espana pidiendo transferencias, con clave de idempotencia determinista', async () => {
+  const withCapabilities = (transfers: string, payouts: string) =>
+    accountJson({
+      configuration: {
+        recipient: {
+          applied: true,
+          capabilities: {
+            stripe_balance: {
+              payouts: { status: payouts, status_details: [] },
+              stripe_transfers: { status: transfers, status_details: [] },
+            },
+          },
+        },
+      },
+    });
+
+  const asAccount = (v: Record<string, unknown>) => v as unknown as Stripe.V2.Core.Account;
+
+  it('crea la cuenta de Espana (recipient, panel Express, solo transferencias) con clave de idempotencia determinista', async () => {
     const server = fakeServer(() => json(accountJson()));
     const r = await adapter(server).createAccount({
       artistId: 'artist-1',
@@ -315,16 +343,55 @@ describe('StripePayoutAdapter (SDK + cliente resiliente inyectado)', () => {
 
     const call = server.calls[0] as Call;
     expect(call.method).toBe('POST');
-    expect(call.url).toBe('https://api.stripe.com/v1/accounts');
-    const form = new URLSearchParams(call.body);
-    expect(form.get('type')).toBe('express');
-    expect(form.get('country')).toBe('ES');
-    expect(form.get('capabilities[transfers][requested]')).toBe('true');
-    expect(form.get('capabilities[card_payments][requested]')).toBeNull();
-    expect(form.get('metadata[artist_id]')).toBe('artist-1');
-    expect(call.headers.get('idempotency-key')).toBe('create_account:artist-1');
+    expect(call.url).toBe('https://api.stripe.com/v2/core/accounts');
+    expect(JSON.parse(call.body)).toEqual({
+      ...ACCOUNT_CREATION_PARAMS,
+      contact_email: 'ana@example.com',
+      metadata: { artist_id: 'artist-1' },
+    });
+    // Con panel Express la plataforma asume comisiones y saldos negativos (exigido por Stripe).
+    expect(ACCOUNT_CREATION_PARAMS.defaults.responsibilities).toEqual({
+      fees_collector: 'application',
+      losses_collector: 'application',
+    });
+    expect(call.headers.get('idempotency-key')).toBe('create_account_v2:artist-1');
     expect(call.headers.get('stripe-version')).toBe('2026-01-01');
-    expect(REQUESTED_CAPABILITIES).toEqual({ transfers: { requested: true } });
+    expect(server.calls).toHaveLength(1); // sin retirada manual no se toca el calendario
+  });
+
+  it('con retirada manual fija el calendario de pagos manual de la cuenta recien creada', async () => {
+    const server = fakeServer((req) =>
+      req.url.endsWith('/v1/balance_settings')
+        ? json({ object: 'balance_settings' })
+        : json(accountJson()),
+    );
+    const r = await adapter(server, true).createAccount({
+      artistId: 'artist-1',
+      email: email('ana@example.com'),
+    });
+    expect(unwrap(r).providerAccountId).toBe('acct_123');
+    const second = server.calls[1] as Call;
+    expect(second.url).toBe('https://api.stripe.com/v1/balance_settings');
+    expect(second.headers.get('stripe-account')).toBe('acct_123');
+    expect(new URLSearchParams(second.body).get('payments[payouts][schedule][interval]')).toBe(
+      'manual',
+    );
+  });
+
+  it('si el calendario manual falla, la creacion falla y el reintento reutiliza la misma cuenta', async () => {
+    const server = fakeServer((req) =>
+      req.url.endsWith('/v1/balance_settings')
+        ? json({ error: { message: 'boom' } }, 500)
+        : json(accountJson()),
+    );
+    const r = await adapter(server, true).createAccount({
+      artistId: 'artist-1',
+      email: email('ana@example.com'),
+    });
+    expect(!r.ok && r.error.code).toBe('dependency_unavailable');
+    const creations = server.calls.filter((c) => c.url.endsWith('/v2/core/accounts'));
+    expect(creations).toHaveLength(1);
+    expect(creations[0]?.headers.get('idempotency-key')).toBe('create_account_v2:artist-1');
   });
 
   it('un 500 se reintenta porque la peticion lleva clave de idempotencia (la misma en ambos intentos)', async () => {
@@ -339,23 +406,32 @@ describe('StripePayoutAdapter (SDK + cliente resiliente inyectado)', () => {
     expect(r.ok).toBe(true);
     expect(server.calls).toHaveLength(2);
     expect(server.calls.map((c) => c.headers.get('idempotency-key'))).toEqual([
-      'create_account:artist-1',
-      'create_account:artist-1',
+      'create_account_v2:artist-1',
+      'create_account_v2:artist-1',
     ]);
   });
 
-  it('el enlace de onboarding devuelve la URL del proveedor', async () => {
+  it('el enlace de onboarding v2 devuelve la URL del proveedor', async () => {
     const server = fakeServer(() =>
-      json({ object: 'account_link', url: 'https://connect.stripe.com/setup/e/abc' }),
+      json({ object: 'v2.core.account_link', url: 'https://connect.stripe.com/setup/e/abc' }),
     );
     const r = await adapter(server).createOnboardingLink('acct_123', {
       returnUrl: 'https://app.test/artista/cobros',
       refreshUrl: 'https://app.test/artista/cobros',
     });
     expect(unwrap(r).url).toBe('https://connect.stripe.com/setup/e/abc');
-    const form = new URLSearchParams((server.calls[0] as Call).body);
-    expect(form.get('type')).toBe('account_onboarding');
-    expect(form.get('account')).toBe('acct_123');
+    const call = server.calls[0] as Call;
+    expect(call.url).toBe('https://api.stripe.com/v2/core/account_links');
+    expect(JSON.parse(call.body)).toEqual({
+      account: 'acct_123',
+      use_case: {
+        type: 'account_onboarding',
+        account_onboarding: {
+          return_url: 'https://app.test/artista/cobros',
+          refresh_url: 'https://app.test/artista/cobros',
+        },
+      },
+    });
   });
 
   it('el SDK anade siempre una clave de idempotencia a los POST, asi que un fallo del servicio se reintenta con la misma clave', async () => {
@@ -371,7 +447,7 @@ describe('StripePayoutAdapter (SDK + cliente resiliente inyectado)', () => {
     expect([...keys][0]).toBeTruthy();
   });
 
-  it('lee el estado de la cuenta y lo reduce al resumen del dominio', async () => {
+  it('lee el estado de la cuenta pidiendo capacidades y exigencias, y lo reduce al resumen del dominio', async () => {
     const server = fakeServer(() => json(accountJson()));
     const snapshot = unwrap(await adapter(server).getAccountSnapshot('acct_123'));
     expect(snapshot).toEqual({
@@ -381,29 +457,53 @@ describe('StripePayoutAdapter (SDK + cliente resiliente inyectado)', () => {
       disabled: false,
       eventAt: 1_700_000_000_000,
     });
-    expect(server.calls[0]?.method).toBe('GET');
+    const call = server.calls[0] as Call;
+    expect(call.method).toBe('GET');
+    const url = new URL(call.url);
+    expect(url.pathname).toBe('/v2/core/accounts/acct_123');
+    expect(url.searchParams.get('include[0]')).toBe('configuration.recipient');
+    expect(url.searchParams.get('include[1]')).toBe('requirements');
   });
 
-  it('snapshotFromAccount cubre cuentas incompletas y deshabilitadas', () => {
-    const base = accountJson() as unknown as Stripe.Account;
-    expect(
-      snapshotFromAccount({ ...base, capabilities: { transfers: 'pending' } } as Stripe.Account, 1)
-        .transfersActive,
-    ).toBe(false);
-    expect(
-      snapshotFromAccount({ ...base, payouts_enabled: false } as Stripe.Account, 1).payoutsEnabled,
-    ).toBe(false);
+  it('snapshotFromAccount cubre cuentas incompletas, pendientes de verificacion, restringidas y cerradas', () => {
+    // Recien creada: faltan datos del artista y las capacidades estan restringidas.
+    const onboarding = snapshotFromAccount(
+      asAccount({
+        ...withCapabilities('restricted', 'restricted'),
+        requirements: { entries: [{ awaiting_action_from: 'user' }] },
+      }),
+      1,
+    );
+    expect(onboarding).toMatchObject({
+      detailsSubmitted: false,
+      transfersActive: false,
+      payoutsEnabled: false,
+      disabled: false,
+    });
+    // Datos enviados, a la espera de Stripe.
     expect(
       snapshotFromAccount(
-        {
-          ...base,
-          requirements: { disabled_reason: 'rejected.fraud' },
-        } as unknown as Stripe.Account,
+        asAccount({
+          ...withCapabilities('pending', 'pending'),
+          requirements: { entries: [{ awaiting_action_from: 'stripe' }] },
+        }),
         1,
-      ).disabled,
-    ).toBe(true);
-    expect(snapshotFromAccount({ id: 'a' } as Stripe.Account, 1)).toMatchObject({
-      detailsSubmitted: false,
+      ),
+    ).toMatchObject({ detailsSubmitted: true, transfersActive: false, disabled: false });
+    // Transferencias activas pero sin poder cobrar a su banco todavia.
+    expect(
+      snapshotFromAccount(asAccount(withCapabilities('active', 'restricted')), 1),
+    ).toMatchObject({ transfersActive: true, payoutsEnabled: false });
+    // Rechazada o cerrada: deshabilitada.
+    expect(snapshotFromAccount(asAccount(withCapabilities('rejected', 'active')), 1).disabled).toBe(
+      true,
+    );
+    expect(snapshotFromAccount(asAccount(accountJson({ closed: true })), 1).disabled).toBe(true);
+    // Sin configuracion de recipient (cuenta de otra clase): nada activo.
+    expect(snapshotFromAccount(asAccount({ id: 'a' }), 1)).toMatchObject({
+      detailsSubmitted: true,
+      transfersActive: false,
+      payoutsEnabled: false,
       disabled: false,
     });
   });
@@ -427,28 +527,46 @@ describe('StripePayoutAdapter (SDK + cliente resiliente inyectado)', () => {
     expect(server.calls.length).toBe(before);
   });
 
-  describe('webhook de cuentas: verificacion de firma con el SDK real', () => {
+  describe('webhook de cuentas v2 (eventos finos): verificacion de firma con el SDK real', () => {
     const secret = 'whsec_test_secret_0123456789';
-    const event = (type = 'account.updated') => ({
+    const THIN = 'v2.core.account[requirements].updated';
+    const ACCOUNT_REF = {
+      id: 'acct_123',
+      type: 'v2.core.account',
+      url: '/v2/core/accounts/acct_123',
+    };
+    const event = (type: string = THIN, related: unknown = ACCOUNT_REF) => ({
       id: 'evt_1',
-      object: 'event',
+      object: 'v2.core.event',
       type,
-      created: 1_700_000_100,
-      data: { object: accountJson({ requirements: { disabled_reason: 'requirements.past_due' } }) },
+      created: '2023-11-14T22:15:00.000Z',
+      livemode: false,
+      related_object: related,
     });
     const sign = (payload: string, s = secret) =>
       Stripe.webhooks.generateTestHeaderString({ payload, secret: s });
 
-    it('acepta una firma valida y reduce el evento', () => {
+    it('acepta una firma valida y reduce el evento a la cuenta afectada', () => {
       const payload = JSON.stringify(event());
       const r = adapter(fakeServer(() => json({}))).parseEvent(payload, sign(payload));
-      const parsed = unwrap(r);
-      expect(parsed).toMatchObject({
+      expect(unwrap(r)).toEqual({
         id: 'evt_1',
-        type: 'account.updated',
+        type: THIN,
         providerAccountId: 'acct_123',
+        occurredAt: Date.parse('2023-11-14T22:15:00.000Z'),
       });
-      expect(parsed?.snapshot).toMatchObject({ disabled: true, eventAt: 1_700_000_100_000 });
+    });
+
+    it.each([
+      'v2.core.account.updated',
+      'v2.core.account.closed',
+      'v2.core.account[configuration.recipient].capability_status_updated',
+      'v2.core.account[configuration.recipient].updated',
+      'v2.core.account[requirements].updated',
+    ])('procesa el tipo %s', (type) => {
+      const payload = JSON.stringify(event(type));
+      const parsed = unwrap(adapter(fakeServer(() => json({}))).parseEvent(payload, sign(payload)));
+      expect(parsed?.providerAccountId).toBe('acct_123');
     });
 
     it('rechaza firmas invalidas, secretos distintos y cuerpos manipulados', () => {
@@ -461,9 +579,19 @@ describe('StripePayoutAdapter (SDK + cliente resiliente inyectado)', () => {
     });
 
     it('un tipo de evento que no usamos se confirma sin efecto', () => {
-      const payload = JSON.stringify(event('customer.created'));
-      const r = adapter(fakeServer(() => json({}))).parseEvent(payload, sign(payload));
-      expect(unwrap(r)).toBeNull();
+      for (const type of ['v2.core.account.person.created', 'v2.core.account_link.returned']) {
+        const payload = JSON.stringify(event(type));
+        const r = adapter(fakeServer(() => json({}))).parseEvent(payload, sign(payload));
+        expect(unwrap(r)).toBeNull();
+      }
+    });
+
+    it('un evento sin cuenta identificable se confirma sin efecto', () => {
+      for (const related of [null, { id: 'cus_1', type: 'customer', url: '/x' }]) {
+        const payload = JSON.stringify(event(THIN, related));
+        const r = adapter(fakeServer(() => json({}))).parseEvent(payload, sign(payload));
+        expect(unwrap(r)).toBeNull();
+      }
     });
   });
 });

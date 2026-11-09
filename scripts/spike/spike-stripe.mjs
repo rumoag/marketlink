@@ -22,19 +22,21 @@ const { flags } = parseArgs(process.argv.slice(2));
 let key = '';
 const secrets = () => [key];
 
-function call(method, path, { form, account, idem } = {}) {
+function call(method, path, { form, json, account, idem } = {}) {
   const version = process.env.STRIPE_API_VERSION;
   return request({
     method,
-    url: BASE + path,
+    // Una ruta que empieza por «/» es absoluta desde el host (p. ej. /v2/core/accounts).
+    url: path.startsWith('/') ? new URL(path, BASE).toString() : BASE + path,
     headers: {
       Authorization: `Bearer ${key}`,
       ...(version ? { 'Stripe-Version': version } : {}),
       ...(account ? { 'Stripe-Account': account } : {}),
       ...(idem ? { 'Idempotency-Key': idem } : {}),
       ...(form ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
+      ...(json ? { 'Content-Type': 'application/json' } : {}),
     },
-    body: form ? toForm(form).toString() : undefined,
+    body: json ? JSON.stringify(json) : form ? toForm(form).toString() : undefined,
   });
 }
 
@@ -122,50 +124,75 @@ async function bizum() {
   console.log(`   Resultado guardado en ${saveResult('stripe-bizum', out, secrets())}`);
 }
 
+/**
+ * Cuenta de artista con Accounts v2 (Stripe ya no admite crearlas con la API v1 en cuentas nuevas).
+ * Los parametros son los mismos que usa el adaptador de produccion (ACCOUNT_CREATION_PARAMS).
+ */
 async function account() {
   const s = state();
   let id = s.account;
   if (!id || flags.has('new')) {
-    const res = await call('POST', 'accounts', {
-      form: {
-        type: 'express',
-        country: 'ES',
-        business_type: 'individual',
-        capabilities: { card_payments: { requested: true }, transfers: { requested: true } },
+    const res = await call('POST', '/v2/core/accounts', {
+      idem: `spike-account-v2-${Date.now()}`,
+      json: {
+        contact_email: process.env.SPIKE_EMAIL || 'spike@example.com',
+        identity: { country: 'es' },
+        dashboard: 'express',
+        defaults: {
+          currency: 'eur',
+          responsibilities: { fees_collector: 'application', losses_collector: 'application' },
+        },
+        configuration: {
+          recipient: {
+            capabilities: { stripe_balance: { stripe_transfers: { requested: true } } },
+          },
+        },
+        metadata: { artist_id: 'spike' },
       },
     });
-    console.log(`P6 POST accounts (express): ${describe(res)}`);
+    console.log(`P6 POST /v2/core/accounts (recipient, panel express): ${describe(res)}`);
     if (!res.ok)
       throw new Error(
-        'No se pudo crear la cuenta Express de prueba. Comprueba que Connect esta activado en tu cuenta de Stripe.',
+        'No se pudo crear la cuenta de prueba. Comprueba que Connect esta activado en tu cuenta de Stripe.',
       );
     id = res.body.id;
     saveState({ account: id });
   } else {
     console.log(`P6 Se reutiliza la cuenta de prueba guardada (${id}). Usa --new para crear otra.`);
   }
-  const link = await call('POST', 'account_links', {
-    form: {
+  const link = await call('POST', '/v2/core/account_links', {
+    json: {
       account: id,
-      type: 'account_onboarding',
-      refresh_url: 'https://example.com/refresh',
-      return_url: 'https://example.com/return',
+      use_case: {
+        type: 'account_onboarding',
+        account_onboarding: {
+          refresh_url: 'https://example.com/refresh',
+          return_url: 'https://example.com/return',
+        },
+      },
     },
   });
-  console.log(`   POST account_links: ${describe(link)}`);
+  console.log(`   POST /v2/core/account_links: ${describe(link)}`);
   if (link.ok) {
     console.log(
       '   Abre este enlace en tu navegador y completa el onboarding con los datos de prueba de Stripe:',
     );
     console.log(`   ${link.body.url}`);
   }
-  const acc = await call('GET', `accounts/${id}`);
+  const acc = await call(
+    'GET',
+    `/v2/core/accounts/${id}?include[0]=configuration.recipient&include[1]=requirements`,
+  );
+  const balance = acc.body?.configuration?.recipient?.capabilities?.stripe_balance;
   const status = acc.ok
     ? {
-        charges_enabled: acc.body.charges_enabled,
-        payouts_enabled: acc.body.payouts_enabled,
-        transfers: acc.body.capabilities?.transfers,
-        requirementsPendientes: acc.body.requirements?.currently_due?.length ?? null,
+        transfers: balance?.stripe_transfers?.status,
+        payouts: balance?.payouts?.status,
+        closed: acc.body.closed,
+        exigenciasPendientes: (acc.body.requirements?.entries ?? []).length,
+        esperandoAlArtista: (acc.body.requirements?.entries ?? []).filter(
+          (e) => e.awaiting_action_from === 'user',
+        ).length,
       }
     : null;
   console.log(`   Estado de la cuenta: ${status ? JSON.stringify(status) : describe(acc)}`);
@@ -223,14 +250,16 @@ async function balance() {
 async function payoutSchedule() {
   const s = state();
   if (!s.account) throw new Error('Falta la cuenta de prueba: ejecuta antes --account.');
-  const res = await call('POST', `accounts/${s.account}`, {
-    form: { settings: { payouts: { schedule: { interval: 'manual' } } } },
+  // Con cuentas v2 el calendario se fija en la API de ajustes de saldo, con la cuenta como actor.
+  const res = await call('POST', 'balance_settings', {
+    account: s.account,
+    form: { payments: { payouts: { schedule: { interval: 'manual' } } } },
   });
-  console.log(`P7 Calendario de pagos en manual: ${describe(res)}`);
+  console.log(`P7 Calendario de pagos en manual (balance_settings): ${describe(res)}`);
   saveState({
     payoutSchedule: {
       status: res.status,
-      interval: res.ok ? res.body.settings?.payouts?.schedule?.interval : null,
+      interval: res.ok ? res.body.payments?.payouts?.schedule?.interval : null,
       error: res.ok ? null : res.body?.error?.message,
     },
   });

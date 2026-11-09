@@ -1,6 +1,6 @@
 # Runbook: configurar Stripe Connect (cuentas de artistas)
 
-Estado: **pendiente de ejecutar**. El spike de U0 (`scripts/spike/spike-stripe.mjs`) debe confirmar los puntos marcados con ⚠ antes de invitar a artistas reales.
+Estado: **cuentas v2 verificadas en el sandbox** (creación, enlace de onboarding, estado y calendario manual; ADR 0028). Siguen pendientes de comprobar: el onboarding completo, los eventos con una URL pública, y los puntos P6 y P7 del dinero (`dinero.md`).
 
 ## 1. Cuenta de plataforma
 
@@ -10,19 +10,25 @@ Estado: **pendiente de ejecutar**. El spike de U0 (`scripts/spike/spike-stripe.m
 
 ## 2. Cuentas conectadas de los artistas
 
-- Tipo **Express**, país **ES**.
-- Capacidad solicitada: **`transfers`** (nuestro modelo cobra en la plataforma y transfiere después). Está en `REQUESTED_CAPABILITIES` (`stripe-payout-adapter.ts`).
-- ⚠ **Por confirmar con el spike:** que una cuenta Express española con solo `transfers` se puede crear y activar. Si Stripe exigiera también `card_payments` (o el acuerdo de servicio «recipient», que podría no estar disponible para cuentas nacionales), se añade en esa constante y se documenta aquí.
-- Estado «cobros activos» = `capabilities.transfers = active` **y** `payouts_enabled = true` **y** sin `requirements.disabled_reason`. (Corrige el criterio original de US-004, que hablaba de `charges_enabled`.)
+Stripe no admite crear cuentas con la API v1 en plataformas nuevas, así que se usa **Accounts v2** (ADR 0028):
+
+- Configuración **recipient** con la capacidad `stripe_balance.stripe_transfers` (nuestro modelo cobra en la plataforma y transfiere después), país **ES**, panel **Express**.
+- Con panel Express, Stripe exige que la plataforma asuma comisiones y saldos negativos (`fees_collector` y `losses_collector` = `application`). Es una decisión de negocio: la plataforma responde de los saldos negativos de las cuentas. Revísala con el asesor antes de abrir a artistas reales.
+- Los parámetros están en `ACCOUNT_CREATION_PARAMS` (`stripe-payout-adapter.ts`).
+- Estado «cobros activos» = capacidades `stripe_transfers` **y** `payouts` en estado `active`, y cuenta no cerrada ni rechazada.
+- ✅ Verificado en el sandbox: una cuenta con solo `stripe_transfers` se crea sin `card_payments`.
 
 ## 3. Webhook de cuentas conectadas
 
-1. Panel de Stripe → Developers → Webhooks → _Add endpoint_ → **Connected accounts** (tipo Connect).
+Los eventos de cuentas v2 son **eventos finos**: solo identifican la cuenta, y el trabajo `apply_account_event` consulta su estado.
+
+1. Panel de Stripe → Developers → Event destinations → _Create destination_ → eventos de **tu cuenta** (cuentas v2), estilo **thin**.
 2. URL: `<URL estable>/api/webhooks/stripe-connect`.
-3. Evento: `account.updated`.
+3. Eventos: `v2.core.account.updated`, `v2.core.account.closed`, `v2.core.account[configuration.recipient].capability_status_updated`, `v2.core.account[configuration.recipient].updated` y `v2.core.account[requirements].updated`.
 4. Copiar el secreto de firma (`whsec_…`) a `STRIPE_CONNECT_WEBHOOK_SECRET` en Vercel (por entorno).
 5. Repetir en modo real para producción con su propio secreto.
-6. En local: `stripe listen --forward-connect-to localhost:3000/api/webhooks/stripe-connect`.
+6. En local: `stripe listen --forward-thin-to localhost:3000/api/webhooks/stripe-connect --thin-events "v2.core.account.updated"` (ajusta los eventos; comprueba la sintaxis con `stripe listen --help`).
+7. ⚠ Por verificar con una URL pública: que el destino entrega estos eventos para cuentas creadas por la plataforma y que la firma se valida con este secreto.
 
 ## 4. Variables de entorno
 
@@ -30,10 +36,10 @@ Estado: **pendiente de ejecutar**. El spike de U0 (`scripts/spike/spike-stripe.m
 
 ## 5. Comprobación manual obligatoria (una vez por entorno)
 
-1. Con un artista de prueba con perfil y dirección, pulsa «Activar cobros»: debe abrirse el onboarding alojado de Stripe.
+1. Con un artista de prueba con perfil y dirección, pulsa «Activar cobros»: debe abrirse el onboarding alojado de Stripe. Sin la app desplegada se puede probar con `node scripts/spike/spike-stripe.mjs --account` (imprime el enlace; caduca en minutos, se regenera ejecutándolo de nuevo).
 2. Completa el onboarding de prueba con los datos de prueba de Stripe.
 3. Al volver a `/artista/cobros` debe verse «Cobros activos» (por la consulta directa o por el webhook).
-4. En el panel de Stripe, comprueba que el evento `account.updated` se entregó con 2xx.
+4. En el panel de Stripe, comprueba que los eventos `v2.core.account…` se entregaron con 2xx.
 5. Simula una restricción (en modo de prueba, desde el panel de la cuenta conectada) y comprueba que sus enlaces pasan a «Pausado» y el panel muestra el aviso.
 6. Reenvía el mismo evento desde Stripe: no debe cambiar nada (idempotencia).
 
@@ -43,4 +49,4 @@ Ver `rotacion-secretos.md`. Tras rotar `STRIPE_CONNECT_WEBHOOK_SECRET`, los even
 
 ## U5: calendario de pagos y transferencias
 
-Con `PAYOUT_MODE=manual` las cuentas Express se crean con `settings.payouts.schedule.interval = manual`; las existentes se actualizan con `scripts/ops/set-manual-payouts.mjs`. La plataforma transfiere al entregar y la artista retira con **Retirar**. Detalle y avisos en `dinero.md`. **Pendiente de comprobar en sandbox (P6, P7).**
+Con `PAYOUT_MODE=manual` el adaptador fija el calendario manual de cada cuenta recién creada con la API de ajustes de saldo (`POST /v1/balance_settings` con la cuenta como actor); las existentes se actualizan con `scripts/ops/set-manual-payouts.mjs`. La plataforma transfiere al entregar y la artista retira con **Retirar**. Detalle y avisos en `dinero.md`. **Pendiente de comprobar en sandbox (P6, P7).**

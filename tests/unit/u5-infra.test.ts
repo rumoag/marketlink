@@ -236,7 +236,7 @@ describe('eventos nuevos del webhook de la plataforma', () => {
   });
 });
 
-describe('cuentas Express con calendario manual', () => {
+describe('cuentas conectadas con calendario manual', () => {
   const payoutAdapter = (server: ReturnType<typeof fakeServer>, manualPayouts: boolean) =>
     new StripePayoutAdapter({
       secretKey: 'sk_test_0123456789abcdef',
@@ -247,20 +247,27 @@ describe('cuentas Express con calendario manual', () => {
       manualPayouts,
     });
 
-  it('con retirada manual crea la cuenta con pagos manuales; en automatico no toca el calendario', async () => {
-    const manual = fakeServer(() => json({ id: 'acct_1', object: 'account' }));
+  it('con retirada manual fija el calendario manual de la cuenta; en automatico no lo toca', async () => {
+    const respond = (req: { url: string }) =>
+      req.url.endsWith('/v1/balance_settings')
+        ? json({ object: 'balance_settings' })
+        : json({ id: 'acct_1', object: 'v2.core.account' });
+    const manual = fakeServer(respond);
     await payoutAdapter(manual, true).createAccount({
       artistId: 'a1',
       email: 'ana@example.com' as never,
     });
-    expect(
-      new URLSearchParams(manual.calls[0]!.body).get('settings[payouts][schedule][interval]'),
-    ).toBe('manual');
-    const auto = fakeServer(() => json({ id: 'acct_2', object: 'account' }));
+    const settings = manual.calls.find((c) => c.url.endsWith('/v1/balance_settings'));
+    expect(settings?.headers.get('stripe-account')).toBe('acct_1');
+    expect(new URLSearchParams(settings!.body).get('payments[payouts][schedule][interval]')).toBe(
+      'manual',
+    );
+    const auto = fakeServer(respond);
     await payoutAdapter(auto, false).createAccount({
       artistId: 'a1',
       email: 'ana@example.com' as never,
     });
-    expect(auto.calls[0]!.body).not.toContain('schedule');
+    expect(auto.calls).toHaveLength(1);
+    expect(auto.calls[0]!.url).toBe('https://api.stripe.com/v2/core/accounts');
   });
 });

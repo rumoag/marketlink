@@ -2,7 +2,7 @@
 
 ## Cómo fluye el dinero
 
-Pago confirmado → **retención** en el libro (cobro, retención de la obra, envío de la plataforma) → entrega confirmada (hecho de transporte o liberación manual) → **liquidación pendiente** → `pg_cron` (cada minuto) → **transferencia** ligada al cobro a la cuenta Express → saldo **disponible** → la artista pulsa **Retirar** → pago a su banco. El envío nunca se transfiere: se queda en la plataforma.
+Pago confirmado → **retención** en el libro (cobro, retención de la obra, envío de la plataforma) → entrega confirmada (hecho de transporte o liberación manual) → **liquidación pendiente** → `pg_cron` (cada minuto) → **transferencia** ligada al cobro a la cuenta conectada (Accounts v2, panel Express) → saldo **disponible** → la artista pulsa **Retirar** → pago a su banco. El envío nunca se transfiere: se queda en la plataforma.
 
 ## Variables
 
@@ -42,7 +42,7 @@ Sin `--apply` solo lista. Con `--apply` pide escribir `APLICAR <n>` (`APLICAR LI
 
 ## Comprobación obligatoria con Stripe (la hace una persona)
 
-**Fase 1 (sandbox):** compra completa → entrega (panel simulado o liberación manual) → transferencia ligada al cobro a una cuenta Express de prueba → saldo disponible → pago a banco con calendario manual → reembolso total y parcial antes de liquidar → rechazo del reembolso tras liquidar → reenvío de eventos de Stripe (idempotencia) → una disputa de prueba. Anota el resultado en `docs/adr/0007-spike-u0-results.md` (P5, P6, P7).
+**Fase 1 (sandbox):** compra completa → entrega (panel simulado o liberación manual) → transferencia ligada al cobro a una cuenta conectada de prueba (Accounts v2: `node scripts/spike/spike-stripe.mjs --account`) → saldo disponible → pago a banco con calendario manual → reembolso total y parcial antes de liquidar → rechazo del reembolso tras liquidar → reenvío de eventos de Stripe (idempotencia) → una disputa de prueba. Anota el resultado en `docs/adr/0007-spike-u0-results.md` (P5, P6, P7).
 
 **Fase 2 (antes de M2, producción):** un ciclo real de pocos euros con una artista de prueba hasta que el dinero llega a su banco; anota fecha, importe, comisiones reales, plazo y margen calculado en `docs/quotas.md`.
 

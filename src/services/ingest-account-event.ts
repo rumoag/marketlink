@@ -1,46 +1,25 @@
 import type { ConnectEvent, PayoutProvider } from '@/modules/accounts/application/ports';
-import type { AccountSnapshot } from '@/modules/accounts/domain/payout';
 import type { AuditLog } from '@/modules/platform/application/audit-log';
 import type { Logger } from '@/modules/platform/application/ports';
 
 /** Carga minima y sin datos personales que se guarda del evento (BR-J9). */
 export type AccountEventPayload = {
   readonly providerAccountId: string;
-  readonly snapshot: AccountSnapshot;
+  readonly occurredAt: number;
 };
 
 export const toPayload = (event: ConnectEvent): AccountEventPayload => ({
   providerAccountId: event.providerAccountId,
-  snapshot: event.snapshot,
+  occurredAt: event.occurredAt,
 });
 
 /** Lectura defensiva del payload guardado (viene de la base de datos). */
 export const parsePayload = (raw: unknown): AccountEventPayload | undefined => {
   if (typeof raw !== 'object' || raw === null) return undefined;
   const p = raw as Record<string, unknown>;
-  const s = p.snapshot as Record<string, unknown> | undefined;
-  if (typeof p.providerAccountId !== 'string' || typeof s !== 'object' || s === null) {
-    return undefined;
-  }
-  if (
-    typeof s.detailsSubmitted !== 'boolean' ||
-    typeof s.transfersActive !== 'boolean' ||
-    typeof s.payoutsEnabled !== 'boolean' ||
-    typeof s.disabled !== 'boolean' ||
-    typeof s.eventAt !== 'number'
-  ) {
-    return undefined;
-  }
-  return {
-    providerAccountId: p.providerAccountId,
-    snapshot: {
-      detailsSubmitted: s.detailsSubmitted,
-      transfersActive: s.transfersActive,
-      payoutsEnabled: s.payoutsEnabled,
-      disabled: s.disabled,
-      eventAt: s.eventAt,
-    },
-  };
+  if (typeof p.providerAccountId !== 'string' || p.providerAccountId === '') return undefined;
+  if (typeof p.occurredAt !== 'number' || !Number.isFinite(p.occurredAt)) return undefined;
+  return { providerAccountId: p.providerAccountId, occurredAt: p.occurredAt };
 };
 
 /** Almacen de eventos entrantes (tabla `webhook_events` de U1). */

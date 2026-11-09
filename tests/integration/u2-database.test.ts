@@ -498,9 +498,10 @@ describeDb('U2: base de datos con el rol de la aplicacion (RLS)', () => {
 
   it('webhook_events: la ingesta es idempotente por evento', async () => {
     const store = new PgWebhookEventStore(app);
-    const payload = { providerAccountId: 'acct_X', snapshot: enabled(5) };
-    expect(await store.insertIfNew('stripe', 'evt_1', 'account.updated', payload)).toBe(true);
-    expect(await store.insertIfNew('stripe', 'evt_1', 'account.updated', payload)).toBe(false);
+    const payload = { providerAccountId: 'acct_X', occurredAt: 5 };
+    const type = 'v2.core.account[requirements].updated';
+    expect(await store.insertIfNew('stripe', 'evt_1', type, payload)).toBe(true);
+    expect(await store.insertIfNew('stripe', 'evt_1', type, payload)).toBe(false);
     await store.markProcessed('stripe', 'evt_1');
     const row = await admin.query<{ status: string }>(
       "SELECT status FROM webhook_events WHERE event_id = 'evt_1'",

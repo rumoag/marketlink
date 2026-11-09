@@ -561,6 +561,7 @@ export const getServices = (): Services | undefined => {
   });
   registerU2Jobs(registry, {
     apply,
+    provider: payout,
     photos,
     enqueue,
     notifier: runtime.notifier,

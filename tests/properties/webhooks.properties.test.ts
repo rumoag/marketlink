@@ -66,6 +66,7 @@ const buildFlow = async () => {
     queue.enqueue(input);
   registerU2Jobs(registry, {
     apply: h.apply,
+    provider: h.payout,
     photos: h.photos,
     enqueue,
     notifier: new LoggingOperatorNotifier(h.logger),
@@ -80,24 +81,29 @@ const buildFlow = async () => {
     logger: h.logger,
   });
 
+  /**
+   * Los eventos de cuenta v2 son finos: solo traen la cuenta y el instante. El estado lo da el
+   * proveedor al procesar el trabajo (`h.payout.snapshots`), que cada prueba fija a su gusto.
+   */
   const send = (event: { id: string; snapshot: AccountSnapshot }, signature = 'valid') =>
     ingest.handle(
       JSON.stringify({
         id: event.id,
-        type: 'account.updated',
+        type: 'v2.core.account[requirements].updated',
         providerAccountId: ACCOUNT,
-        snapshot: event.snapshot,
+        occurredAt: event.snapshot.eventAt,
       }),
       signature,
       'c',
     );
+  const setProviderState = (snapshot: AccountSnapshot) => h.payout.snapshots.set(ACCOUNT, snapshot);
   const drain = async () => {
     for (let i = 0; i < 20; i++) {
       const r = await queue.runBatch({ correlationId: 'c', limit: 50 });
       if (r.claimed === 0) return;
     }
   };
-  return { h, artistId, store, jobStore, send, drain };
+  return { h, artistId, store, jobStore, send, drain, setProviderState };
 };
 
 describe('R-08 webhooks de cuenta duplicados y desordenados', () => {
@@ -133,6 +139,7 @@ describe('R-08 webhooks de cuenta duplicados y desordenados', () => {
       id: 'evt_9',
       snapshot: { ...f.h.enabledSnapshot(f.h.clock.now() + 10), disabled: true },
     };
+    f.setProviderState(event.snapshot);
     await f.send(event);
     await f.send(event); // duplicado
     await f.drain();
@@ -170,6 +177,9 @@ describe('R-08 webhooks de cuenta duplicados y desordenados', () => {
               ((b.snapshot.eventAt * 31 + shuffleSeed) % 7),
           );
           for (const e of arrival) await f.send(e);
+          // El proveedor ya esta en el estado del evento mas reciente cuando se procesan los trabajos.
+          const latest = events.reduce((a, b) => (b.snapshot.eventAt > a.snapshot.eventAt ? b : a));
+          f.setProviderState(latest.snapshot);
           await f.drain();
 
           // Cada evento distinto genera como mucho un trabajo y una fila (idempotencia).
@@ -179,7 +189,6 @@ describe('R-08 webhooks de cuenta duplicados y desordenados', () => {
           );
           expect(applyJobs).toHaveLength(events.length);
 
-          const latest = events.reduce((a, b) => (b.snapshot.eventAt > a.snapshot.eventAt ? b : a));
           const payout = f.h.db.state.payouts.get(f.artistId)?.state;
           expect(payout?.lastEventAt).toBe(latest.snapshot.eventAt);
           const enabled =
@@ -206,20 +215,53 @@ describe('R-08 webhooks de cuenta duplicados y desordenados', () => {
     );
   });
 
+  it('un fallo al consultar el estado de la cuenta reintenta el trabajo y luego lo aplica', async () => {
+    const f = await buildFlow();
+    const event = {
+      id: 'evt_r',
+      snapshot: { ...f.h.enabledSnapshot(f.h.clock.now() + 10), disabled: true },
+    };
+    f.setProviderState(event.snapshot);
+    await f.send(event);
+    f.h.payout.down = true;
+    await f.drain();
+    // Sin proveedor no se aplica nada y el evento sigue pendiente de procesar.
+    expect(f.h.db.state.payouts.get(f.artistId)?.state.status).not.toBe('restringido');
+    expect([...f.store.events.values()].every((e) => !e.processed)).toBe(true);
+
+    f.h.payout.down = false;
+    f.h.clock.advance(10 * 60_000); // pasa la espera del reintento
+    await f.drain();
+    expect(f.h.db.state.payouts.get(f.artistId)?.state.status).toBe('restringido');
+    expect([...f.store.events.values()].every((e) => e.processed)).toBe(true);
+  });
+
+  it('un trabajo que leyo un estado antiguo no pisa al que ya aplico uno mas reciente', async () => {
+    const f = await buildFlow();
+    const t = f.h.clock.now();
+    const disabled = { ...f.h.enabledSnapshot(t + 20), disabled: true };
+    // Un primer evento se procesa con el proveedor deshabilitado...
+    f.setProviderState(disabled);
+    await f.send({ id: 'evt_new', snapshot: disabled });
+    await f.drain();
+    expect(f.h.db.state.payouts.get(f.artistId)?.state.status).toBe('restringido');
+    // ...y otro evento anterior que llega tarde lee el estado actual: no cambia nada.
+    f.setProviderState(f.h.enabledSnapshot(t + 5)); // lectura con un instante anterior
+    await f.send({ id: 'evt_old', snapshot: f.h.enabledSnapshot(t + 5) });
+    await f.drain();
+    expect(f.h.db.state.payouts.get(f.artistId)?.state.status).toBe('restringido');
+  });
+
   it('parsePayload rechaza cargas mal formadas', () => {
     expect(parsePayload(null)).toBeUndefined();
     expect(parsePayload({ providerAccountId: 'a' })).toBeUndefined();
-    expect(parsePayload({ providerAccountId: 'a', snapshot: { eventAt: 'x' } })).toBeUndefined();
-    const ok = parsePayload({
+    expect(parsePayload({ providerAccountId: '', occurredAt: 5 })).toBeUndefined();
+    expect(parsePayload({ providerAccountId: 'a', occurredAt: 'x' })).toBeUndefined();
+    expect(parsePayload({ providerAccountId: 'a', occurredAt: Number.NaN })).toBeUndefined();
+    const ok = parsePayload({ providerAccountId: 'a', occurredAt: 5 });
+    expect(unwrap({ ok: true as const, value: ok })).toEqual({
       providerAccountId: 'a',
-      snapshot: {
-        detailsSubmitted: true,
-        transfersActive: true,
-        payoutsEnabled: true,
-        disabled: false,
-        eventAt: 5,
-      },
+      occurredAt: 5,
     });
-    expect(unwrap({ ok: true as const, value: ok })?.providerAccountId).toBe('a');
   });
 });
