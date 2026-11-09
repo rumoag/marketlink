@@ -1,0 +1,20 @@
+# Configuracion de gitleaks (analisis de secretos del CI). Mantiene las reglas por defecto.
+title = "MarketLink"
+
+[extend]
+useDefault = true
+
+# Claves FICTICIAS. Los hallazgos del analisis inicial eran todos valores de prueba
+# (`sk_test_0123456789abcdef`, `valor-secreto-123`, ...) en las carpetas de pruebas y las variables
+# de prueba del CI (`ci-...-0123456789-...`). Cualquier hallazgo fuera de esas carpetas, o en el CI
+# con otra forma, sigue haciendo fallar el analisis.
+[allowlist]
+description = "Claves ficticias de pruebas y del CI"
+condition = "OR"
+paths = [
+  '''^tests/''',
+  '''^scripts/spike/lib\.test\.mjs$''',
+]
+regexes = [
+  '''ci-[a-z-]+-0123456789''',
+]
