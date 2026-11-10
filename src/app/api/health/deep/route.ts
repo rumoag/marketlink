@@ -28,16 +28,19 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json(r.body, { status: r.status, headers: r.headers });
   }
+  let failure: { code?: string; message?: string } | undefined;
   const result = await deepHealth(runtime.db, (cause) => {
     // Solo el codigo y el mensaje del error (nunca la cadena de conexion).
     const e = cause as { code?: unknown; message?: unknown };
-    runtime.logger.warn('health_deep_database_failed', {
-      code: typeof e.code === 'string' ? e.code : undefined,
-      message: typeof e.message === 'string' ? e.message.slice(0, 200) : undefined,
-      correlationId,
-    });
+    failure = {
+      ...(typeof e.code === 'string' ? { code: e.code } : {}),
+      ...(typeof e.message === 'string' ? { message: e.message.slice(0, 200) } : {}),
+    };
+    runtime.logger.warn('health_deep_database_failed', { ...failure, correlationId });
   });
-  return NextResponse.json(result, {
+  // La ruta exige el secreto de monitorizacion: aqui el operador ve por que falla la base.
+  const body = failure === undefined ? result : { ...result, databaseError: failure };
+  return NextResponse.json(body, {
     status: result.status === 'ok' ? 200 : 503,
     headers: { 'Cache-Control': 'no-store', 'x-correlation-id': correlationId },
   });
