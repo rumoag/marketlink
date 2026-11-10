@@ -300,6 +300,7 @@ describe('P-U1-17 carga de configuracion', () => {
 
   const baseEnv = (a: string, b: string, c: string, dbPw: string) => ({
     DATABASE_URL: `postgres://user:${dbPw}@host:6543/db`,
+    DATABASE_CA_CERT: `-----BEGIN CERTIFICATE-----\n${'A'.repeat(60)}\n-----END CERTIFICATE-----`,
     INTERNAL_JOBS_SECRET: a,
     RATE_LIMIT_SALT: b,
     MONITOR_SECRET: c,

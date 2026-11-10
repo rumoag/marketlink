@@ -22,6 +22,7 @@ import {
 } from '@/modules/platform/infrastructure/request-pipeline';
 import { secretMatches } from '@/modules/platform/infrastructure/secrets';
 import { createSubjectHasher } from '@/modules/platform/infrastructure/subject-hasher';
+import { sslFor } from '@/modules/platform/infrastructure/db-client';
 import { deepHealth, shallowHealth } from '@/modules/platform/infrastructure/health';
 import { appError } from '@/modules/kernel/domain/app-error';
 import { FakeClock } from '@tests/support/generators';
@@ -725,5 +726,61 @@ describe('Secretos y salud', () => {
       causes.push(c),
     );
     expect(causes).toHaveLength(1);
+  });
+});
+
+describe('TLS hacia la base de datos y cadena de conexion', () => {
+  it('sin TLS en servidores locales y con TLS fuera de ellos', () => {
+    for (const host of ['localhost', '127.0.0.1', 'postgres', 'db']) {
+      expect(sslFor(`postgresql://u:p@${host}:5432/x`)).toBe(false);
+    }
+    expect(sslFor('postgresql://u:p@aws-1-eu-west-3.pooler.supabase.com:6543/postgres')).toEqual({
+      rejectUnauthorized: false,
+    });
+  });
+
+  it('con el certificado de la CA verifica al servidor', () => {
+    expect(sslFor('postgresql://u:p@host.example.com:6543/x', 'PEM')).toEqual({
+      ca: 'PEM',
+      rejectUnauthorized: true,
+    });
+  });
+
+  it('una cadena que no es una URL devuelve sin TLS en lugar de fallar', () => {
+    expect(sslFor('no es una url')).toBe(false);
+  });
+
+  const env = (over: Record<string, string>) =>
+    ({
+      APP_ENV: 'sandbox',
+      DATABASE_URL:
+        'postgresql://marketlink_app.p:Abc123@aws-1-eu-west-3.pooler.supabase.com:6543/postgres',
+      INTERNAL_JOBS_SECRET: 'a'.repeat(32),
+      RATE_LIMIT_SALT: 'b'.repeat(32),
+      SESSION_COOKIE_SECRET: 'c'.repeat(32),
+      TRACKING_TOKEN_SECRET: 'd'.repeat(32),
+      E2E_ENABLED: 'true',
+      ...over,
+    }) as unknown as NodeJS.ProcessEnv;
+
+  it.each([
+    ['con comillas', '"postgresql://u:p@h:6543/postgres"'],
+    ['con espacio inicial', ' postgresql://u:p@h:6543/postgres'],
+    ['sin esquema', 'u:p@h:6543/postgres'],
+    ['con el nombre de la variable', 'DATABASE_URL=postgresql://u:p@h:6543/postgres'],
+  ])('rechaza una DATABASE_URL %s (pg la leeria con un servidor falso)', (_name, url) => {
+    expect(loadConfig(env({ DATABASE_URL: url })).ok).toBe(false);
+  });
+
+  it('acepta postgres:// y postgresql://', () => {
+    expect(loadConfig(env({ DATABASE_URL: 'postgres://u:p@h:6543/postgres' })).ok).toBe(true);
+    expect(loadConfig(env({})).ok).toBe(true);
+  });
+
+  it('el certificado de la base admite saltos de linea escapados', () => {
+    const pem = `-----BEGIN CERTIFICATE-----\n${'A'.repeat(60)}\n-----END CERTIFICATE-----`;
+    const r = loadConfig(env({ DATABASE_CA_CERT: pem }));
+    expect(r.ok && r.value.databaseCaCert?.includes('\n')).toBe(true);
+    expect(r.ok && r.value.databaseCaCert?.includes('\\n')).toBe(false);
   });
 });

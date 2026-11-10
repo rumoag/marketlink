@@ -18,9 +18,36 @@ export interface Db {
 
 const globalForDb = globalThis as unknown as { __marketlinkPool?: Pool };
 
-export const createDb = (connectionString: string, options: { max?: number } = {}): Db => {
+/** Servidores locales o de contenedor (CI, desarrollo): sin TLS. */
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', 'postgres', 'db']);
+
+/**
+ * TLS hacia la base de datos. Supabase lo exige (ESSLREQUIRED). Con el certificado de la CA de
+ * Supabase (`DATABASE_CA_CERT`) se verifica la identidad del servidor; sin el, la conexion va
+ * cifrada pero sin verificar al servidor, lo que solo se acepta en sandbox (en live la
+ * configuracion exige el certificado).
+ */
+export const sslFor = (
+  connectionString: string,
+  ca?: string,
+): false | { rejectUnauthorized: boolean; ca?: string } => {
+  let host: string;
+  try {
+    host = new URL(connectionString).hostname;
+  } catch {
+    return false;
+  }
+  if (LOCAL_HOSTS.has(host)) return false;
+  return ca !== undefined ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: false };
+};
+
+export const createDb = (
+  connectionString: string,
+  options: { max?: number; ca?: string } = {},
+): Db => {
   const pool = new Pool({
     connectionString,
+    ssl: sslFor(connectionString, options.ca),
     max: options.max ?? 5,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 5_000,
@@ -55,8 +82,10 @@ const wrapPool = (pool: Pool): Db => ({
 /** Singleton por proceso (sobrevive a recargas en desarrollo). */
 export const getDb = (config: AppConfig): Db => {
   if (!globalForDb.__marketlinkPool) {
+    const connectionString = config.databaseUrl.reveal();
     globalForDb.__marketlinkPool = new Pool({
-      connectionString: config.databaseUrl.reveal(),
+      connectionString,
+      ssl: sslFor(connectionString, config.databaseCaCert),
       max: 5,
       idleTimeoutMillis: 10_000,
       connectionTimeoutMillis: 5_000,

@@ -32,6 +32,8 @@ export type AppConfig = {
   readonly flags: { readonly paymentManualEnabled: boolean; readonly bizumEnabled: boolean };
   readonly maxListingPriceCents: number;
   readonly databaseUrl: Secret;
+  /** Certificado de la CA de la base (PEM) para verificar el TLS; obligatorio en live. */
+  readonly databaseCaCert: string | undefined;
   readonly internalJobsSecret: Secret;
   readonly rateLimitSalt: Secret;
   readonly monitorSecret: Secret | undefined;
@@ -176,7 +178,9 @@ const schema = z.object({
   PAYMENT_MANUAL_ENABLED: bool,
   BIZUM_ENABLED: bool,
   MAX_LISTING_PRICE_CENTS: z.coerce.number().int().min(100).max(100_000).optional(),
-  DATABASE_URL: z.string().min(1),
+  // Una cadena mal formada (comillas, sin esquema...) la interpreta pg con un servidor falso.
+  DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\/[^\s"']+$/),
+  DATABASE_CA_CERT: z.string().min(50).optional(),
   INTERNAL_JOBS_SECRET: z.string().min(32),
   RATE_LIMIT_SALT: z.string().min(32),
   MONITOR_SECRET: z.string().min(32).optional(),
@@ -293,6 +297,9 @@ export const loadConfig = (
   ) {
     problems.push('SUPABASE_URL: debe ser https en live');
   }
+  if (e.APP_ENV === 'live' && e.DATABASE_CA_CERT === undefined) {
+    problems.push('DATABASE_CA_CERT: obligatoria en live (verifica el TLS de la base)');
+  }
   // U3 (NFR-U3-24, BR3-MN5): el modo manual no puede activarse en real hasta decidir la politica
   // del importe y de quien paga el envio.
   if (e.APP_ENV === 'live' && e.PAYMENT_MANUAL_ENABLED) {
@@ -334,6 +341,7 @@ export const loadConfig = (
     flags: { paymentManualEnabled: e.PAYMENT_MANUAL_ENABLED, bizumEnabled: e.BIZUM_ENABLED },
     maxListingPriceCents: e.MAX_LISTING_PRICE_CENTS ?? 100_000,
     databaseUrl: new Secret(e.DATABASE_URL),
+    databaseCaCert: e.DATABASE_CA_CERT?.replace(/\\n/g, '\n'),
     internalJobsSecret: new Secret(e.INTERNAL_JOBS_SECRET),
     rateLimitSalt: new Secret(e.RATE_LIMIT_SALT),
     monitorSecret: e.MONITOR_SECRET !== undefined ? new Secret(e.MONITOR_SECRET) : undefined,
