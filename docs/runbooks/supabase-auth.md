@@ -1,6 +1,6 @@
 # Runbook: configurar Supabase Auth y el correo de acceso
 
-Se hace una vez por proyecto de Supabase (sandbox y, antes de M2, producción). Estado: **pendiente de ejecutar**; los valores marcados «a verificar» dependen del plan del proveedor.
+Se hace una vez por proyecto de Supabase (sandbox y, antes de M2, producción). Estado: **verificado en sandbox (2026-11-10)**: alta de una artista nueva, correo de acceso por Resend, pantalla intermedia y entrada a `/artista`. Para producción hay que repetirlo con el dominio y el SMTP definitivos. Los valores marcados «a verificar» dependen del plan del proveedor.
 
 ## 1. Ajustes de Auth
 
@@ -16,7 +16,9 @@ Se hace una vez por proyecto de Supabase (sandbox y, antes de M2, producción). 
 | Límites de sesión del proveedor        | No se usan: la aplicación aplica 7 y 30 días                                                                              |
 | Claves de firma del JWT                | Asimétricas (así `getClaims` verifica sin red); si el proyecto usa secreto compartido, funciona pero consulta al servidor |
 
-## 2. Plantilla del correo «Magic Link»
+## 2. Plantilla del correo «Magic Link» (y también «Confirm sign up»)
+
+**Supabase solo deja editar las plantillas si hay SMTP propio** (apartado 3, hay que hacerlo antes). Y la plantilla hay que ponerla en **dos sitios**: una cuenta nueva o sin confirmar recibe «Confirm sign up», y una ya confirmada recibe «Magic link». Con solo una de las dos, el primer correo de una artista nueva llega con el enlace por defecto de Supabase, que no sirve con nuestra pantalla de entrada. Ambas usan el mismo cuerpo, y la aplicación verifica siempre con `type: 'email'`.
 
 Asunto: `Tu enlace para entrar`. Cuerpo (texto sencillo en español, sin imágenes remotas):
 

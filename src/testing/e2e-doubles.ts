@@ -41,6 +41,8 @@ type E2EState = {
   refresh: Map<string, { userId: string; email: Email }>;
   objects: Map<string, Uint8Array>;
   accounts: Map<string, AccountSnapshot>;
+  /** Cuentas con activacion lenta (como Stripe): id -> instante en que pasan a activas (0 = sin onboarding). */
+  slowAccounts: Map<string, number>;
 };
 
 const g = globalThis as unknown as { __marketlinkE2E?: E2EState };
@@ -52,6 +54,7 @@ const state = (): E2EState =>
     refresh: new Map(),
     objects: new Map(),
     accounts: new Map(),
+    slowAccounts: new Map(),
   });
 
 const token = (): string => randomBytes(24).toString('base64url');
@@ -131,7 +134,23 @@ const ENABLED: Omit<AccountSnapshot, 'eventAt'> = {
   disabled: false,
 };
 
-/** Cuenta de cobros simulada: al crear el enlace de onboarding queda habilitada. */
+/** Estado de una cuenta que ya envio sus datos y espera a que Stripe active las capacidades. */
+const VERIFYING: Omit<AccountSnapshot, 'eventAt'> = {
+  detailsSubmitted: true,
+  transfersActive: false,
+  payoutsEnabled: false,
+  disabled: false,
+};
+
+/** Lo que tarda en activarse una cuenta «lenta» (simula la demora real de Stripe). */
+export const SLOW_ACTIVATION_MS = 8_000;
+/** Los correos de artista que empiezan asi crean cuentas de activacion lenta (solo pruebas). */
+export const SLOW_ACCOUNT_EMAIL_PREFIX = 'lento-';
+
+/**
+ * Cuenta de cobros simulada: al crear el enlace de onboarding queda habilitada, salvo las cuentas
+ * «lentas» (correo que empieza por `lento-`), que tardan unos segundos como en Stripe real.
+ */
 export class FakePayoutProvider implements PayoutProvider {
   constructor(
     private readonly appUrl: string,
@@ -140,8 +159,10 @@ export class FakePayoutProvider implements PayoutProvider {
 
   createAccount(input: {
     artistId: string;
+    email?: string;
   }): Promise<Result<{ providerAccountId: string }, AppError>> {
     const id = `acct_fake_${input.artistId.slice(0, 8)}`;
+    if (input.email?.startsWith(SLOW_ACCOUNT_EMAIL_PREFIX)) state().slowAccounts.set(id, 0);
     state().accounts.set(id, {
       detailsSubmitted: false,
       transfersActive: false,
@@ -153,11 +174,21 @@ export class FakePayoutProvider implements PayoutProvider {
   }
 
   createOnboardingLink(providerAccountId: string): Promise<Result<{ url: string }, AppError>> {
-    state().accounts.set(providerAccountId, { ...ENABLED, eventAt: this.now() });
+    if (state().slowAccounts.has(providerAccountId)) {
+      state().slowAccounts.set(providerAccountId, this.now() + SLOW_ACTIVATION_MS);
+      state().accounts.set(providerAccountId, { ...VERIFYING, eventAt: this.now() });
+    } else {
+      state().accounts.set(providerAccountId, { ...ENABLED, eventAt: this.now() });
+    }
     return Promise.resolve(ok({ url: `${this.appUrl}/artista/cobros?onboarding=simulado` }));
   }
 
   getAccountSnapshot(providerAccountId: string): Promise<Result<AccountSnapshot, AppError>> {
+    const slowUntil = state().slowAccounts.get(providerAccountId);
+    if (slowUntil !== undefined && slowUntil > 0 && this.now() >= slowUntil) {
+      state().slowAccounts.delete(providerAccountId);
+      state().accounts.set(providerAccountId, { ...ENABLED, eventAt: this.now() });
+    }
     const snapshot = state().accounts.get(providerAccountId);
     if (!snapshot) return Promise.resolve(err(appError('not_found')));
     return Promise.resolve(ok({ ...snapshot, eventAt: this.now() }));

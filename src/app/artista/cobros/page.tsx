@@ -2,6 +2,7 @@ import Link from 'next/link';
 import type { PayoutStatus, RequirementsHint } from '@/modules/accounts/domain/payout';
 import { requestInfo, requireArtistId, requireServices } from '@/ui/server-context';
 import { CobrosForm } from './cobros-form';
+import { ComprobarEstado } from './comprobar-estado';
 
 const TITLES: Record<PayoutStatus, string> = {
   sin_iniciar: 'Cobros sin activar',
@@ -81,6 +82,9 @@ export default async function CobrosPage() {
         </p>
       ) : null}
       <CobrosForm label={label} disabled={!ready || payout.status === 'activo'} />
+      {payout.status === 'onboarding_pendiente' || payout.status === 'restringido' ? (
+        <ComprobarEstado auto={payout.status === 'onboarding_pendiente'} />
+      ) : null}
     </>
   );
 }

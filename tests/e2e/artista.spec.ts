@@ -269,6 +269,45 @@ test.describe('Flujo del artista (US-002 a US-013)', () => {
   });
 });
 
+test.describe('Activacion de cobros que tarda (Stripe real tarda unos segundos)', () => {
+  test('la pantalla de cobros se actualiza sola al activarse la cuenta, sin recargar', async ({
+    page,
+    request,
+  }) => {
+    await signIn(page, request, uniqueEmail('lento'));
+    await page.goto('/artista/perfil');
+    await page.getByTestId('perfil-nombre-input').fill('Ana Art');
+    await page.getByTestId('perfil-instagram-input').fill('@Ana.Art');
+    await page.getByTestId('perfil-telefono-input').fill('612 345 678');
+    await page.getByTestId('perfil-guardar-button').click();
+    await expect(page.getByTestId('perfil-guardado')).toBeVisible();
+    await page.goto('/artista/direccion');
+    await page.getByTestId('direccion-calle-input').fill('Calle Mayor');
+    await page.getByTestId('direccion-numero-input').fill('12');
+    await page.getByTestId('direccion-cp-input').fill('28001');
+    await page.getByTestId('direccion-ciudad-input').fill('Madrid');
+    await page.getByTestId('direccion-provincia-input').fill('Madrid');
+    await page.getByTestId('direccion-telefono-input').fill('612345678');
+    await page.getByTestId('direccion-guardar-button').click();
+    await expect(page.getByTestId('direccion-guardada')).toBeVisible();
+
+    await page.goto('/artista/cobros');
+    await page.getByTestId('cobros-activar-button').click();
+    await expect(page).toHaveURL(/\/artista\/cobros/);
+
+    // Al volver, Stripe aun no ha terminado: se explica y hay un boton para comprobar a mano.
+    await expect(page.getByTestId('cobros-estado-text')).toHaveText('Activación en curso');
+    await expect(page.getByTestId('cobros-comprobar-button')).toBeVisible();
+    await expect(page.getByTestId('cobros-comprobando')).toContainText('se actualiza sola');
+
+    // Sin recargar ni pulsar nada, pasa a «Cobros activos» cuando Stripe termina.
+    await expect(page.getByTestId('cobros-estado-text')).toHaveText('Cobros activos', {
+      timeout: 25_000,
+    });
+    await expect(page.getByTestId('cobros-comprobar-button')).toHaveCount(0);
+  });
+});
+
 test.describe('Aislamiento entre artistas (EN-03)', () => {
   test('un artista no ve ni abre los enlaces de otro', async ({ browser, request }) => {
     const ctxA = await browser.newContext();
