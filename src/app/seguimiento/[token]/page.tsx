@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Money } from '@/modules/kernel/domain/money';
 import { formatMadrid } from '@/modules/kernel/domain/dates';
 import { instantOf } from '@/modules/kernel/domain/clock';
+import { deliveryText } from '@/ui/delivery-text';
 import { requestInfo, requireServices } from '@/ui/server-context';
 
 export const dynamic = 'force-dynamic';
@@ -41,6 +42,15 @@ export default async function SeguimientoPage({ params }: { params: Promise<{ to
       <p data-testid="seguimiento-obra">
         {v.title} · de {v.artisticName}
       </p>
+      <section aria-label="Cómo recibirás la obra" className="flex flex-col gap-1">
+        <p data-testid="seguimiento-servicio">{deliveryText(v.delivery)}</p>
+        {v.delivery.point ? (
+          <p data-testid="seguimiento-punto">
+            Punto de recogida: <strong>{v.delivery.point.name}</strong>, {v.delivery.point.address}
+            {v.delivery.point.schedule ? ` (${v.delivery.point.schedule})` : ''}
+          </p>
+        ) : null}
+      </section>
       <section aria-label="Importes" className="flex flex-col gap-1">
         <p className="flex justify-between">
           <span>Obra</span>

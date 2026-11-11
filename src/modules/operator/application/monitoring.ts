@@ -113,6 +113,7 @@ export type HealthView = {
     stuck: number;
     unpaidDrafts: number;
     openFlags: number;
+    oldestUnpaidDraftHours: number | undefined;
     blockedSettlements: number;
   }>;
   readonly alerts: Section<{ code: string; n: number }[]>;
@@ -147,6 +148,8 @@ export class GetHealth {
       readonly clock: Clock;
       readonly logger: Logger;
       readonly staleDays: number;
+      /** U8: horas sin pagar antes de avisar de un borrador (UNPAID_DRAFT_ALERT_HOURS). */
+      readonly unpaidDraftAlertHours?: number;
       readonly circuits: () => CircuitView[];
       readonly quotasReviewedAt: () => number | undefined;
       readonly live: boolean;
@@ -199,6 +202,8 @@ export class GetHealth {
       failedJobs24h: jobs.ok ? jobs.value.failed24h : 0,
       oldestPendingJobMinutes: jobs.ok ? jobs.value.oldestPendingMinutes : undefined,
       failedEmails: emails.ok ? emails.value.failed : 0,
+      oldestUnpaidDraftHours: counts.ok ? counts.value.oldestUnpaidDraftHours : undefined,
+      unpaidDraftAlertHours: deps.unpaidDraftAlertHours,
       backupAgeHours: backup.ok && backup.value ? backup.value.ageHours : undefined,
       openCircuits: circuits.ok ? circuits.value.filter((c) => c.state === 'open').length : 0,
       quotasStale: quotas.status === 'vencida',

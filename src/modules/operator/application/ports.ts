@@ -142,7 +142,13 @@ export interface OperatorRepository {
   counts(
     now: number,
     staleDays: number,
-  ): Promise<{ stuck: number; unpaidDrafts: number; openFlags: number }>;
+  ): Promise<{
+    stuck: number;
+    unpaidDrafts: number;
+    openFlags: number;
+    /** U8: horas del borrador sin pagar mas antiguo; `undefined` si no hay ninguno. */
+    oldestUnpaidDraftHours: number | undefined;
+  }>;
   listArtists(): Promise<{ id: string; name: string }[]>;
   // Tamaños
   saveSize(size: 'S' | 'M' | 'L', values: SizeValues, now: number): Promise<boolean>;

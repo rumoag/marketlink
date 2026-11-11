@@ -91,6 +91,7 @@ export const listingArb = (overrides: Partial<Listing> = {}): fc.Arbitrary<Listi
       fragile: r.fragile,
       size: r.size,
       modality: r.modality,
+      origins: [r.modality],
       status: r.status,
       pausedReason: r.status === 'pausado' ? 'artista' : undefined,
       orderId: undefined,

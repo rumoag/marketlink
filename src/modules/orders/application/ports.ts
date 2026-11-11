@@ -67,6 +67,8 @@ export type CheckoutListing = {
   readonly fragile: boolean;
   readonly size: PackageSize;
   readonly modality: Modality;
+  /** U8: origenes que la artista acepta (BR8-O4). */
+  readonly origins: readonly Modality[];
   readonly artisticName: string;
   readonly instagram: string;
   readonly sender: {

@@ -514,6 +514,14 @@ export class MemoryDb implements TransactionRunner<AppRepos> {
             stuck: filtered({ stuckOnly: true }, now, staleDays).length,
             unpaidDrafts: [...st.shipments.values()].filter((x) => x.status === 'borrador').length,
             openFlags: st.flags.filter((f) => f.closedAt === undefined).length,
+            oldestUnpaidDraftHours: (() => {
+              const times = [...st.shipments.values()]
+                .filter((x) => x.status === 'borrador' && x.draftCreatedAt !== undefined)
+                .map((x) => x.draftCreatedAt as number);
+              return times.length === 0
+                ? undefined
+                : Math.max(0, Math.floor((now - Math.min(...times)) / 3_600_000));
+            })(),
           });
         },
         listArtists: () =>

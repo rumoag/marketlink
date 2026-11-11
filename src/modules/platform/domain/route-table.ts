@@ -12,6 +12,8 @@ export type RateLimitRuleName =
   | 'magic_link_email'
   | 'magic_link_ip'
   | 'quote_ip'
+  | 'options_ip'
+  | 'points_ip'
   | 'checkout_ip'
   | 'tracking_ip'
   | 'reserve_ip'

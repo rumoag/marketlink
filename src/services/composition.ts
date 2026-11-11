@@ -17,9 +17,12 @@ import { PhotoService } from '@/modules/listings/application/photo-service';
 import type { ImageProcessor, PhotoStorage } from '@/modules/listings/application/ports';
 import { ReservationService } from '@/modules/listings/application/reservation-service';
 import { CancelCheckout } from '@/modules/checkout/application/cancel-checkout';
-import { QuoteShipping } from '@/modules/checkout/application/quote-shipping';
+import { ListDeliveryPoints, QuoteOptions } from '@/modules/checkout/application/quote-shipping';
+import { ShippingOptionsFinder } from '@/modules/checkout/application/shipping-options';
+import { IndicativePricing } from './indicative-prices';
+import { PgProviderCache } from '@/modules/checkout/infrastructure/pg-provider-cache';
 import { StartCheckout } from '@/modules/checkout/application/start-checkout';
-import type { ShippingProvider } from '@/modules/checkout/application/ports';
+import type { DeliveryPointProvider, ShippingProvider } from '@/modules/checkout/application/ports';
 import { PacklinkShippingAdapter } from '@/modules/checkout/infrastructure/packlink-shipping-adapter';
 import {
   ExpireStaleOrders,
@@ -188,7 +191,11 @@ export type Services = {
   // U3
   readonly payments: PaymentProvider;
   readonly shipping: ShippingProvider;
-  readonly quote: QuoteShipping;
+  /** U8: opciones de entrega y puntos de recogida, con cache compartida. */
+  readonly shippingFinder: ShippingOptionsFinder;
+  readonly quoteOptions: QuoteOptions;
+  readonly indicativePrices: IndicativePricing;
+  readonly listPoints: ListDeliveryPoints;
   readonly startCheckout: StartCheckout;
   readonly cancelCheckout: CancelCheckout;
   readonly tracking: GetTracking;
@@ -253,7 +260,7 @@ export const getServices = (): Services | undefined => {
   let payout: PayoutProvider;
   let storage: PhotoStorage;
   let payments: PaymentProvider;
-  let shipping: ShippingProvider;
+  let shipping: ShippingProvider & DeliveryPointProvider;
   let shipmentProvider: ShipmentProvider;
   let emailSender: EmailSender;
   let labelStorage: LabelStorage;
@@ -488,7 +495,13 @@ export const getServices = (): Services | undefined => {
     }),
     dispatch,
     remindPickup: new RemindPickup({ runner, alerts, clock, ids: uuidGenerator }),
-    remindPay: new RemindPayLabel({ runner, alerts, clock, ids: uuidGenerator }),
+    remindPay: new RemindPayLabel({
+      runner,
+      alerts,
+      clock,
+      ids: uuidGenerator,
+      payReminderHours: config.shippingOptions.unpaidDraftAlertHours,
+    }),
     purge: new PurgeLabelsAndNotifications({
       runner,
       storage: labelStorage,
@@ -532,7 +545,18 @@ export const getServices = (): Services | undefined => {
     exportFinance: new ExportFinance({ ...jobDeps, storage: financeStorage }),
   });
   const handleCharge = new HandleChargeEvent({ runner, audit, alerts });
-  const quote = new QuoteShipping({ runner, shipping, limiter, alerts, clock, logger });
+  const shippingFinder = new ShippingOptionsFinder({
+    shipping,
+    points: shipping,
+    cache: new PgProviderCache(db),
+    alerts,
+    clock,
+    logger,
+    cacheTtlMs: config.shippingOptions.quoteCacheTtlMinutes * 60_000,
+  });
+  const indicativePrices = new IndicativePricing({ runner, finder: shippingFinder });
+  const quoteOptions = new QuoteOptions({ runner, finder: shippingFinder, limiter });
+  const listPoints = new ListDeliveryPoints({ runner, finder: shippingFinder, limiter });
   const queryDeps = { runner, limiter, clock, secrets, manualPolicy };
   registerU3Jobs(registry, {
     processor: processPayment,
@@ -701,6 +725,7 @@ export const getServices = (): Services | undefined => {
         clock,
         logger,
         staleDays: config.money.staleDeliveryDays,
+        unpaidDraftAlertHours: config.shippingOptions.unpaidDraftAlertHours,
         circuits: () =>
           (['stripe', 'packlink', 'resend', 'supabase'] as const).map((provider) => ({
             provider,
@@ -745,10 +770,13 @@ export const getServices = (): Services | undefined => {
     jobs,
     payments,
     shipping,
-    quote,
+    shippingFinder,
+    indicativePrices,
+    quoteOptions,
+    listPoints,
     startCheckout: new StartCheckout({
       runner,
-      quoter: quote,
+      finder: shippingFinder,
       provider: payments,
       limiter,
       alerts,

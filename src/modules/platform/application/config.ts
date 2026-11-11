@@ -74,6 +74,11 @@ export type AppConfig = {
   readonly tracking: { readonly secret: Secret; readonly previousSecret: Secret | undefined };
   /** U3: duraciones de la compra (minutos). */
   readonly checkout: { readonly sessionMinutes: number; readonly reservationMinutes: number };
+  /** U8: cache de Packlink y umbral de borradores sin pagar. */
+  readonly shippingOptions: {
+    readonly quoteCacheTtlMinutes: number;
+    readonly unpaidDraftAlertHours: number;
+  };
   /** U3: plazos de retencion de datos personales y contables. */
   readonly retention: {
     readonly unpaidDays: number;
@@ -213,6 +218,8 @@ const schema = z.object({
   TRACKING_TOKEN_SECRET_PREVIOUS: z.string().min(32).optional(),
   CHECKOUT_SESSION_MINUTES: z.coerce.number().int().min(30).max(120).optional(),
   RESERVATION_MINUTES: z.coerce.number().int().min(30).max(180).optional(),
+  QUOTE_CACHE_TTL_MINUTES: z.coerce.number().int().min(1).max(60).optional(),
+  UNPAID_DRAFT_ALERT_HOURS: z.coerce.number().int().min(1).max(720).optional(),
   RETENTION_UNPAID_DAYS: z.coerce.number().int().min(1).max(365).optional(),
   RETENTION_PERSONAL_MONTHS: z.coerce.number().int().min(1).max(120).optional(),
   RETENTION_FINANCIAL_YEARS: z.coerce.number().int().min(1).max(20).optional(),
@@ -396,6 +403,10 @@ export const loadConfig = (
           : undefined,
     },
     checkout: { sessionMinutes, reservationMinutes },
+    shippingOptions: {
+      quoteCacheTtlMinutes: e.QUOTE_CACHE_TTL_MINUTES ?? 10,
+      unpaidDraftAlertHours: e.UNPAID_DRAFT_ALERT_HOURS ?? 24,
+    },
     retention: {
       unpaidDays: e.RETENTION_UNPAID_DAYS ?? 30,
       personalMonths: e.RETENTION_PERSONAL_MONTHS ?? 12,

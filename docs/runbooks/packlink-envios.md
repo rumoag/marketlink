@@ -33,6 +33,22 @@ Un envío real completo entre dos direcciones del titular, con un paquete peque�
 - Un envío trae `state`, `purchase_date`, `labels` y `tracking_url`, pero ningún enlace ni acción de pago.
 - La ayuda de Packlink PRO describe el pago desde el panel web, con tarjeta o PayPal. No se encontró documentado un saldo prepago ni un pago por API.
 
-Un borrador sale como `AWAITING_COMPLETION` mientras le falta algún dato obligatorio (apellido o correo del remitente o del destinatario). Con la corrección del 2026-11-11 la app manda esos datos; **comprobar con el primer pedido nuevo que el estado ya no es `AWAITING_COMPLETION`**.
+`AWAITING_COMPLETION` es el estado **normal** de un borrador pendiente de pago (ADR 0031): no indica que falten datos. Con la corrección del 2026-11-11 la app manda nombre, apellido y correo de remitente y destinatario, y los datos que Packlink exige para crear el borrador.
 
 Si se quiere automatizar el pago hay que preguntar a Packlink por un acuerdo de empresa (facturación mensual con compra por API) o valorar otro proveedor tras el puerto `ShipmentProvider`. Mientras tanto, el pago de la etiqueta es un paso manual del operador; en el panel de Packlink PRO se pueden pagar varios borradores de una vez.
+
+## Opciones de envío con precio (U8)
+
+La artista acepta uno o dos orígenes (llevar a un punto, recogida en casa) y la compradora elige entre servicios **a domicilio** o **en un punto de recogida**, con transportista, plazo y precio (ADR 0032 y 0033).
+
+**Primer pedido de prueba tras el despliegue (comprobación manual, requiere la cuenta real de Packlink):**
+
+1. Crear un enlace con **los dos orígenes** y abrirlo con un código postal de destino real. Deben aparecer los dos grupos con precios y la más barata a domicilio preseleccionada.
+2. Elegir un servicio **con entrega en punto**, escoger un punto y pagar con la tarjeta de pruebas de Stripe. En la ficha del pedido (artista y operador) deben verse el servicio, el transportista y el punto.
+3. En Packlink PRO, el borrador debe llevar el punto de recogida (`dropoff_point_id`). **Comprobar también un servicio de recogida en casa con entrega en punto**: es el caso no verificado en el spike. Si Packlink lo rechaza, quitar ese origen del catálogo y anotarlo en el ADR 0032.
+4. Un pedido a domicilio debe crear un borrador `AWAITING_COMPLETION` sin pedir nada más.
+5. No pagar las etiquetas de prueba: borrar los borradores en Packlink PRO.
+
+**Si no hay opciones:** `/operador/salud` y el aviso `packlink_no_disponible` indican si es «sin servicio» (código postal sin cobertura de los orígenes aceptados) o «proveedor caído». La caché dura 10 minutos y nunca se sirve caducada.
+
+**Borradores sin pagar:** a partir de `UNPAID_DRAFT_ALERT_HOURS` (24 h) aparecen como «Atención» en `/operador/salud` y se avisa una vez por pedido.

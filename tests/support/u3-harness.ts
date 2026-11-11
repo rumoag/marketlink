@@ -2,14 +2,20 @@ import { randomBytes } from 'node:crypto';
 import { appError, type AppError } from '@/modules/kernel/domain/app-error';
 import type { Instant } from '@/modules/kernel/domain/clock';
 import { err, ok, type Result } from '@/modules/kernel/domain/result';
-import type { ShippingProvider, ShippingQuoteRequest } from '@/modules/checkout/application/ports';
+import type {
+  DeliveryPointProvider,
+  ShippingProvider,
+  ShippingQuoteRequest,
+} from '@/modules/checkout/application/ports';
 import { CancelCheckout } from '@/modules/checkout/application/cancel-checkout';
-import { QuoteShipping } from '@/modules/checkout/application/quote-shipping';
+import { ListDeliveryPoints, QuoteOptions } from '@/modules/checkout/application/quote-shipping';
+import { ShippingOptionsFinder } from '@/modules/checkout/application/shipping-options';
+import { InMemoryProviderCache } from './memory-cache';
 import {
   StartCheckout,
   type StartCheckoutInput,
 } from '@/modules/checkout/application/start-checkout';
-import type { ShippingService } from '@/modules/checkout/domain/quote';
+import type { DeliveryPoint, ShippingService } from '@/modules/checkout/domain/quote';
 import {
   ExpireStaleOrders,
   PurgeUnpaidOrders,
@@ -39,14 +45,58 @@ import { RefundPayment } from '@/modules/orders/application/refund-payment';
 import { unwrap } from '@/modules/kernel/domain/result';
 import { buildHarness } from './harness';
 
-export class MemoryShipping implements ShippingProvider {
+export class MemoryShipping implements ShippingProvider, DeliveryPointProvider {
   calls = 0;
+  pointCalls = 0;
   fail = false;
+  pointsFail = false;
   services: ShippingService[] = [
-    { id: 'p-b', name: 'Punto B', modality: 'punto', priceCents: 450, transitDays: 3 },
-    { id: 'p-a', name: 'Punto A', modality: 'punto', priceCents: 490, transitDays: 2 },
-    { id: 'r-1', name: 'Recogida', modality: 'recogida', priceCents: 620, transitDays: 1 },
+    {
+      id: 'p-b',
+      name: 'Punto B',
+      carrier: 'Correos',
+      modality: 'punto',
+      destination: 'domicilio',
+      priceCents: 450,
+      transitDays: 3,
+    },
+    {
+      id: 'p-a',
+      name: 'Punto A',
+      carrier: 'Seur',
+      modality: 'punto',
+      destination: 'domicilio',
+      priceCents: 490,
+      transitDays: 2,
+    },
+    {
+      id: 'r-1',
+      name: 'Recogida',
+      carrier: 'DHL',
+      modality: 'recogida',
+      destination: 'domicilio',
+      priceCents: 620,
+      transitDays: 1,
+    },
   ];
+  points: DeliveryPoint[] = [
+    {
+      id: 'PT1',
+      name: 'Estanco 1',
+      address: 'Calle Uno 1, 08001, Barcelona',
+      schedule: 'L-V 9-20',
+    },
+    { id: 'PT2', name: 'Kiosco 2', address: 'Calle Dos 2, 08001, Barcelona', schedule: 'L-S 8-21' },
+  ];
+  getDeliveryPoints(
+    _serviceId: string,
+    _postalCode: string,
+  ): Promise<Result<readonly DeliveryPoint[], AppError>> {
+    this.pointCalls += 1;
+    return Promise.resolve(
+      this.pointsFail ? err(appError('dependency_unavailable')) : ok(this.points),
+    );
+  }
   quote(_r: ShippingQuoteRequest): Promise<Result<readonly ShippingService[], AppError>> {
     this.calls += 1;
     return Promise.resolve(this.fail ? err(appError('dependency_unavailable')) : ok(this.services));
@@ -154,14 +204,18 @@ export const buildU3 = (options: { manual?: boolean; bizum?: boolean } = {}) => 
   const manualPolicy = options.manual
     ? { amountDueCents: (o: { totalCents: number }) => o.totalCents }
     : undefined;
-  const quote = new QuoteShipping({
-    runner: db,
+  const cache = new InMemoryProviderCache();
+  const finder = new ShippingOptionsFinder({
     shipping,
-    limiter: h.limiter,
+    points: shipping,
+    cache,
     alerts,
     clock: h.clock,
     logger: h.logger,
+    cacheTtlMs: 10 * 60_000,
   });
+  const quote = new QuoteOptions({ runner: db, finder, limiter: h.limiter });
+  const listPoints = new ListDeliveryPoints({ runner: db, finder, limiter: h.limiter });
   const audit = h.audit;
   const processor = new ProcessPaymentFact({
     runner: db,
@@ -173,7 +227,7 @@ export const buildU3 = (options: { manual?: boolean; bizum?: boolean } = {}) => 
   });
   const startCheckout = new StartCheckout({
     runner: db,
-    quoter: quote,
+    finder,
     provider: payments,
     limiter: h.limiter,
     alerts,
@@ -203,6 +257,9 @@ export const buildU3 = (options: { manual?: boolean; bizum?: boolean } = {}) => 
     payments,
     alerts,
     quote,
+    listPoints,
+    finder,
+    cache,
     processor,
     startCheckout,
     cancel: new CancelCheckout({
@@ -271,7 +328,8 @@ export const checkoutInput = (
   slug,
   fields: buyerFields(),
   acceptTerms: true,
-  acceptedAlternative: false,
+  serviceId: 'p-b',
+  pointId: undefined,
   expectedTotalCents: 25_450,
   submissionKey: nextKey(),
   method: 'stripe',

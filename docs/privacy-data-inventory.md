@@ -83,3 +83,13 @@ Los secretos TOTP viven solo en variables de entorno y en la aplicación de aute
 | Auditoría (sin datos personales)               | `audit_events`                                 | Seguridad y reconstrucción de incidentes  | Sin limpieza en el v0; mínimo 90 días                                        |
 
 La dirección de contacto para ejercer derechos es `CONTACT_EMAIL`. Las copias contienen datos personales cifrados: quien tenga la frase de paso puede abrirlas, por eso se guarda solo en GitHub Secrets y en el gestor de contraseñas del operador.
+
+### Opciones de envío (U8)
+
+| Dato                                                      | Dónde                                | Finalidad                               | Plazo                                   |
+| --------------------------------------------------------- | ------------------------------------ | --------------------------------------- | --------------------------------------- |
+| Punto de recogida elegido (nombre, dirección, horario)    | `orders.destination` (campo `point`) | Entregar el paquete en el punto elegido | Igual que el destino: se purga con él   |
+| Servicio, transportista, plazo y destino elegidos         | `orders.quote`                       | Mostrar y gestionar el envío            | Con el pedido; **sin datos personales** |
+| Servicios y puntos públicos de Packlink por código postal | `provider_cache`                     | Evitar consultas repetidas (10 min)     | Caducan a los 10 minutos; purga diaria  |
+
+La caché de proveedor no contiene datos personales: solo catálogo público de Packlink. El código postal del comprador forma parte de la clave, pero no se asocia a ninguna persona.

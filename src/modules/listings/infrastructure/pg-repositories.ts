@@ -25,6 +25,7 @@ import type {
   PackageSize,
   PausedReason,
 } from '../domain/listing';
+import { normalizeOrigins } from '../domain/listing';
 import type { Reservation, ReservationStatus } from '../domain/reservation';
 import type { Slug } from '../domain/slug';
 
@@ -43,6 +44,7 @@ type ListingRow = {
   fragile: boolean;
   size: PackageSize;
   modality: Modality;
+  origins: Modality[];
   status: ListingStatus;
   paused_reason: PausedReason | null;
   order_id: string | null;
@@ -62,6 +64,7 @@ const toListing = (r: ListingRow): Listing => ({
   fragile: r.fragile,
   size: r.size,
   modality: r.modality,
+  origins: normalizeOrigins(r.origins),
   status: r.status,
   pausedReason: r.paused_reason ?? undefined,
   orderId: r.order_id ?? undefined,
@@ -90,8 +93,8 @@ export class PgListingRepository implements ListingRepository {
       const res = await this.q.query<ListingRow>(
         `INSERT INTO listings
            (id, artist_id, slug, title, description, price_cents, declared_value_cents,
-            fragile, size, modality, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+            fragile, size, modality, origins, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
          RETURNING *`,
         [
           id,
@@ -104,6 +107,7 @@ export class PgListingRepository implements ListingRepository {
           d.fragile,
           d.size,
           d.modality,
+          [...d.origins],
           ts(now),
         ],
       );
@@ -151,7 +155,7 @@ export class PgListingRepository implements ListingRepository {
     await this.q.query(
       `UPDATE listings SET
          title = $2, description = $3, price_cents = $4, declared_value_cents = $5,
-         fragile = $6, size = $7, modality = $8, status = $9, paused_reason = $10,
+         fragile = $6, size = $7, modality = $8, origins = $14, status = $9, paused_reason = $10,
          order_id = $11, updated_at = $12, sold_at = $13
        WHERE id = $1`,
       [
@@ -168,6 +172,7 @@ export class PgListingRepository implements ListingRepository {
         l.orderId ?? null,
         ts(l.updatedAt),
         l.soldAt !== undefined ? ts(l.soldAt) : null,
+        [...l.origins],
       ],
     );
   }

@@ -227,7 +227,7 @@ describe('U6 lista, ficha y atascos (US-039, US-029)', () => {
     });
     expect(unwrap(await u.summary.execute(u.actor, 'c')).counts).toEqual({
       ok: true,
-      value: { stuck: 1, unpaidDrafts: 1, openFlags: 0 },
+      value: { stuck: 1, unpaidDrafts: 1, openFlags: 0, oldestUnpaidDraftHours: 25 },
     });
   });
 

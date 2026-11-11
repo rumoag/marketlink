@@ -15,14 +15,7 @@ const ADDRESS_FIELDS = [
   'province',
   'phone',
 ] as const;
-const LISTING_FIELDS = [
-  'title',
-  'description',
-  'price',
-  'declaredValue',
-  'size',
-  'modality',
-] as const;
+const LISTING_FIELDS = ['title', 'description', 'price', 'declaredValue', 'size'] as const;
 
 const str = (formData: FormData, name: string): string => String(formData.get(name) ?? '');
 
@@ -106,9 +99,11 @@ const listingRaw = (formData: FormData): Record<string, unknown> => {
     fragile: formData.get('fragile') === 'on',
   };
   // Los campos deshabilitados (reserva activa) no se envian: no se tocan (BR2-ED3).
-  for (const name of ['price', 'size', 'modality'] as const) {
+  for (const name of ['price', 'size'] as const) {
     if (formData.has(name)) raw[name] = str(formData, name);
   }
+  // U8: uno o dos origenes (casillas). Sin ninguna marcada llega la lista vacia y se rechaza (BR8-O1).
+  if (formData.has('originsPresent')) raw.origins = formData.getAll('origins').map(String);
   if (declared !== '') raw.declaredValue = declared;
   return raw;
 };
@@ -132,6 +127,7 @@ export async function createListingAction(
   }
   const values = {
     ...textValues(formData, LISTING_FIELDS),
+    origins: formData.getAll('origins').map(String).join(','),
     fragile: String(formData.get('fragile') === 'on'),
   };
 
@@ -162,7 +158,10 @@ export async function updateListingAction(
   formData: FormData,
 ): Promise<FormState> {
   const artistId = await requireArtistId();
-  const values = textValues(formData, LISTING_FIELDS);
+  const values = {
+    ...textValues(formData, LISTING_FIELDS),
+    origins: formData.getAll('origins').map(String).join(','),
+  };
   const result = await requireServices().listings.updateListing(
     artistId,
     listingId,
@@ -264,4 +263,22 @@ export async function chooseDraftPickupAction(orderId: string, formData: FormDat
   revalidatePath(`/artista/pedidos/${orderId}`);
   const outcome = !result.ok ? 'error' : result.value.kind === 'chosen' ? 'ok' : 'no';
   redirect(`/artista/pedidos/${orderId}?recogida=${outcome}`);
+}
+
+/** US-054: precio orientativo («desde X €») de cada origen para el tamano elegido. */
+export type IndicativePricesState = {
+  readonly punto?: number;
+  readonly recogida?: number;
+};
+
+export async function indicativePricesAction(size: string): Promise<IndicativePricesState> {
+  const artistId = await requireArtistId();
+  const { correlationId } = await requestInfo();
+  if (size !== 'S' && size !== 'M' && size !== 'L') return {};
+  const result = await requireServices().indicativePrices.execute(artistId, size, correlationId);
+  if (!result.ok) return {};
+  return {
+    ...(result.value.punto !== undefined ? { punto: result.value.punto } : {}),
+    ...(result.value.recogida !== undefined ? { recogida: result.value.recogida } : {}),
+  };
 }

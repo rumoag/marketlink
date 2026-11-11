@@ -33,6 +33,7 @@ const FIELD_MESSAGES: Readonly<Record<string, string>> = {
   declaredValue: 'El valor declarado debe estar entre 1 y 1.000 euros.',
   size: 'Elige un tamaño.',
   modality: 'Elige cómo se envía.',
+  origins: 'Marca al menos una forma de enviar.',
   photos: 'Sube entre 1 y 3 fotos válidas (JPG, PNG o WebP).',
 };
 

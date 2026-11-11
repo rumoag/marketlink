@@ -12,6 +12,9 @@ export const RATE_LIMIT_RULES: Readonly<Record<RateLimitRuleName, RateLimitRule>
   magic_link_email: { limit: 5, windowSeconds: 3600 },
   magic_link_ip: { limit: 20, windowSeconds: 3600 },
   quote_ip: { limit: 20, windowSeconds: 600 },
+  // U8: opciones de envio y puntos de recogida (NFR-U8-21).
+  options_ip: { limit: 60, windowSeconds: 600 },
+  points_ip: { limit: 60, windowSeconds: 600 },
   checkout_ip: { limit: 10, windowSeconds: 60 },
   tracking_ip: { limit: 60, windowSeconds: 60 },
   reserve_ip: { limit: 5, windowSeconds: 3600 },

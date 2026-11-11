@@ -4,7 +4,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { Money } from '@/modules/kernel/domain/money';
 import { RESUME_COOKIE_NAME, RESUME_TTL_MS } from '@/modules/checkout/domain/consent';
-import type { QuoteState } from '@/modules/checkout/application/quote-shipping';
+import type { DeliveryOptions, ShippingService } from '@/modules/checkout/domain/quote';
 import { toFormState, type FormState } from '@/ui/form-state';
 import { requestInfo, requireServices } from '@/ui/server-context';
 
@@ -20,22 +20,53 @@ const BUYER_FIELDS = [
   'province',
 ] as const;
 
-/** Resumen de la cotizacion que ve la compradora (BR3-TT3, BR3-CT4). */
-export type QuoteView = {
-  readonly kind: 'disponible' | 'solo_alternativa' | 'sin_envio';
-  readonly workCents: number;
-  readonly shippingCents: number;
-  readonly totalCents: number;
-  readonly serviceName: string;
+/** Una opcion de entrega tal como la ve la compradora (US-056). */
+export type OptionView = {
+  readonly id: string;
+  readonly name: string;
+  readonly carrier: string;
   readonly transitDays: number;
+  readonly priceCents: number;
   readonly modality: 'punto' | 'recogida';
+  readonly destination: 'domicilio' | 'punto';
 };
 
+/** Opciones agrupadas por destino, con las destacadas y la preseleccionada (BR8-S). */
+export type OptionsView = {
+  readonly workCents: number;
+  readonly groups: {
+    readonly domicilio: readonly OptionView[];
+    readonly punto: readonly OptionView[];
+  };
+  /** Identificadores de las destacadas (hasta 3 por grupo), en orden de precio. */
+  readonly highlights: {
+    readonly domicilio: readonly string[];
+    readonly punto: readonly string[];
+  };
+  readonly preselectedId: string;
+};
+
+export type PointView = {
+  readonly id: string;
+  readonly name: string;
+  readonly address: string;
+  readonly schedule: string;
+};
+
+export type PointsState =
+  | { readonly kind: 'lista'; readonly points: readonly PointView[] }
+  | { readonly kind: 'vacia' }
+  | { readonly kind: 'error' };
+
 export type CompraState = FormState & {
-  readonly quote?: QuoteView;
-  /** Instante de la respuesta: decide cual de las dos acciones es la mas reciente. */
+  readonly options?: OptionsView;
+  /** Instante de la respuesta: decide cual de las acciones es la mas reciente. */
   readonly at?: number;
+  /** El total cambio al pagar: nuevo total y aviso (BR8-V5). */
   readonly changed?: boolean;
+  readonly newTotalCents?: number;
+  /** Hay que recalcular las opciones o la lista de puntos (BR8-V2, V3). */
+  readonly refresh?: 'opciones' | 'puntos';
 };
 
 const str = (formData: FormData, name: string): string => String(formData.get(name) ?? '');
@@ -44,50 +75,104 @@ const buyerValues = (formData: FormData): Record<string, string> => {
   const out: Record<string, string> = {};
   for (const name of BUYER_FIELDS) out[name] = str(formData, name);
   out.acceptTerms = formData.get('acceptTerms') === 'on' ? 'on' : '';
-  out.acceptedAlternative = formData.get('acceptedAlternative') === 'on' ? 'on' : '';
+  out.serviceId = str(formData, 'serviceId');
+  out.pointId = str(formData, 'pointId');
   return out;
 };
 
-const toQuoteView = (quote: QuoteState): QuoteView | undefined =>
-  quote.kind === 'sin_envio'
-    ? undefined
-    : {
-        kind: quote.kind,
-        workCents: quote.totals.workPriceCents,
-        shippingCents: quote.totals.shippingCents,
-        totalCents: quote.totals.totalCents,
-        serviceName: quote.service.name,
-        transitDays: quote.service.transitDays,
-        modality: quote.service.modality,
-      };
+const toOptionView = (s: ShippingService): OptionView => ({
+  id: s.id,
+  name: s.name,
+  carrier: s.carrier,
+  transitDays: s.transitDays,
+  priceCents: s.priceCents,
+  modality: s.modality,
+  destination: s.destination,
+});
 
-const NO_SHIPPING = 'No podemos calcular el envío ahora, inténtalo más tarde.';
+const toOptionsView = (
+  options: DeliveryOptions,
+  workCents: number,
+  preselected: ShippingService,
+): OptionsView => ({
+  workCents,
+  groups: {
+    domicilio: options.groups.domicilio.map(toOptionView),
+    punto: options.groups.punto.map(toOptionView),
+  },
+  highlights: {
+    domicilio: options.highlights.domicilio.map((s) => s.id),
+    punto: options.highlights.punto.map((s) => s.id),
+  },
+  preselectedId: preselected.id,
+});
 
-/** US-017 a US-019: calcula el envio para el codigo postal indicado. */
-export async function quoteShippingAction(
+const NO_SHIPPING_DOWN = 'No podemos calcular el envío ahora, inténtalo más tarde.';
+const NO_SHIPPING_HERE = 'No hay envío posible a tu código postal.';
+
+/** US-056 a US-063: calcula las opciones de entrega para el codigo postal indicado. */
+export async function quoteOptionsAction(
   slug: string,
   _prev: CompraState,
   formData: FormData,
 ): Promise<CompraState> {
   const { correlationId, ip } = await requestInfo();
   const values = buyerValues(formData);
-  const result = await requireServices().quote.execute(
+  const result = await requireServices().quoteOptions.execute(
     slug,
     str(formData, 'postalCode'),
     ip,
     correlationId,
   );
   const at = Date.now();
-  if (!result.ok) return { ...toFormState(result.error, values), values, at };
-  if (result.value.kind === 'obra_no_disponible') {
+  if (!result.ok) {
+    if (result.error.code === 'dependency_unavailable') {
+      return { message: NO_SHIPPING_DOWN, values, at };
+    }
+    return { ...toFormState(result.error, values), values, at };
+  }
+  const r = result.value;
+  if (r.kind === 'obra_no_disponible') {
     return { message: 'Esta obra ya no está disponible.', values, at };
   }
-  const quote = result.value.quote;
-  if (quote.kind === 'sin_envio') return { message: NO_SHIPPING, values, at };
-  return { values, at, quote: toQuoteView(quote) as QuoteView };
+  if (r.kind === 'sin_envio' || r.options.preselected === undefined) {
+    return { message: NO_SHIPPING_HERE, values, at };
+  }
+  return {
+    values,
+    at,
+    options: toOptionsView(r.options, r.listing.priceCents, r.options.preselected),
+  };
 }
 
-/** US-020: inicia el pago. Nunca fia del importe que llega del navegador (BR3-TT4). */
+/** US-060: puntos de recogida de un servicio para el codigo postal de la compradora. */
+export async function listPointsAction(
+  slug: string,
+  postalCode: string,
+  serviceId: string,
+): Promise<PointsState> {
+  const { correlationId, ip } = await requestInfo();
+  const result = await requireServices().listPoints.execute(
+    slug,
+    postalCode,
+    serviceId,
+    ip,
+    correlationId,
+  );
+  if (!result.ok) return { kind: 'error' };
+  if (result.value.length === 0) return { kind: 'vacia' };
+  return {
+    kind: 'lista',
+    points: result.value.map((p) => ({
+      id: p.id,
+      name: p.name,
+      address: p.address,
+      schedule: p.schedule,
+    })),
+  };
+}
+
+/** US-020, US-061: inicia el pago. Nunca fia del importe ni de la eleccion que llegan del navegador. */
 export async function startCheckoutAction(
   slug: string,
   submissionKey: string,
@@ -101,12 +186,14 @@ export async function startCheckoutAction(
   const fields: Record<string, string> = {};
   for (const name of BUYER_FIELDS) fields[name] = str(formData, name);
   const expected = Number(str(formData, 'expectedTotalCents'));
+  const pointId = str(formData, 'pointId');
 
   const result = await services.startCheckout.execute({
     slug,
     fields,
     acceptTerms: formData.get('acceptTerms') === 'on',
-    acceptedAlternative: formData.get('acceptedAlternative') === 'on',
+    serviceId: str(formData, 'serviceId'),
+    pointId: pointId === '' ? undefined : pointId,
     expectedTotalCents: Number.isSafeInteger(expected) && expected > 0 ? expected : undefined,
     submissionKey,
     method: str(formData, 'method') === 'manual' ? 'manual' : 'stripe',
@@ -127,6 +214,12 @@ export async function startCheckoutAction(
         },
         at,
       };
+    }
+    if (
+      result.error.code === 'validation' &&
+      result.error.details?.some((d) => d.field === 'pointId')
+    ) {
+      return { message: 'Elige un punto de recogida.', values, at };
     }
     return { ...state, at };
   }
@@ -165,27 +258,29 @@ export async function startCheckoutAction(
         values,
         at,
         changed: true,
+        newTotalCents: r.totals.totalCents,
         message: `El precio del envío ha cambiado. El nuevo total es ${Money.format({ cents: r.totals.totalCents, currency: 'EUR' })}. Revísalo y confirma.`,
-        quote: toQuoteView({
-          kind: 'disponible',
-          service: r.service,
-          totals: r.totals,
-        }) as QuoteView,
       };
-    case 'alternative_required':
+    case 'servicio_no_disponible':
       return {
         values,
         at,
+        refresh: 'opciones',
         message:
-          'Esta obra no se puede enviar de la forma elegida a tu código postal. Revisa la alternativa y acéptala para continuar.',
-        quote: toQuoteView({
-          kind: 'solo_alternativa',
-          service: r.service,
-          totals: r.totals,
-        }) as QuoteView,
+          'La opción de envío que elegiste ya no está disponible. Te mostramos las opciones actuales; elige una de nuevo.',
+      };
+    case 'punto_no_disponible':
+      return {
+        values,
+        at,
+        refresh: 'puntos',
+        message:
+          'El punto de recogida que elegiste ya no está disponible. Elige otro de la lista actual.',
       };
     case 'no_shipping':
-      return { message: NO_SHIPPING, values, at };
+      return { message: NO_SHIPPING_HERE, values, at, refresh: 'opciones' };
+    case 'shipping_down':
+      return { message: NO_SHIPPING_DOWN, values, at };
     case 'obra_no_disponible':
       return {
         message:

@@ -63,7 +63,7 @@ export default async function OperadorSaludPage() {
       key: 'work',
       label: 'Trabajo atascado',
       value: h.work.ok ? (
-        `${h.work.value.stuck} pedidos atascados · ${h.work.value.unpaidDrafts} borradores sin pagar · ${h.work.value.openFlags} incidencias abiertas · ${h.work.value.blockedSettlements} liquidaciones bloqueadas`
+        `${h.work.value.stuck} pedidos atascados · ${h.work.value.unpaidDrafts} borradores sin pagar${h.work.value.oldestUnpaidDraftHours !== undefined ? ` (el más antiguo, de ${h.work.value.oldestUnpaidDraftHours} h)` : ''} · ${h.work.value.openFlags} incidencias abiertas · ${h.work.value.blockedSettlements} liquidaciones bloqueadas`
       ) : (
         <NoDisponible />
       ),

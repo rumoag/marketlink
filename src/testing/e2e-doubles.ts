@@ -17,7 +17,11 @@ import type {
   PaymentEvent,
   PaymentProvider,
 } from '@/modules/orders/application/ports';
-import type { ShippingProvider, ShippingQuoteRequest } from '@/modules/checkout/application/ports';
+import type {
+  DeliveryPointProvider,
+  ShippingProvider,
+  ShippingQuoteRequest,
+} from '@/modules/checkout/application/ports';
 import { instantOf } from '@/modules/kernel/domain/clock';
 import type { EmailMessage, EmailSender } from '@/modules/notifications/application/ports';
 import type {
@@ -26,7 +30,7 @@ import type {
   ShipmentProvider,
 } from '@/modules/shipping/application/ports';
 import type { DropoffPoint, PickupOption, ShipmentFact } from '@/modules/shipping/domain/shipment';
-import type { ShippingService } from '@/modules/checkout/domain/quote';
+import type { DeliveryPoint, ShippingService } from '@/modules/checkout/domain/quote';
 import type { FinanceExportStorage, MoneyProvider } from '@/modules/payouts/application/ports';
 
 /**
@@ -355,25 +359,51 @@ export class FakePaymentProvider implements PaymentProvider {
  *  - 44 (Teruel): sin servicio en ninguna modalidad; - 42 (Soria): proveedor caido;
  *  - 26 (La Rioja): solo recogida; - resto: punto 4,90 (2 dias), punto 4,50 (3 dias), recogida 6,20.
  */
-export class FakeShippingProvider implements ShippingProvider {
+export class FakeShippingProvider implements ShippingProvider, DeliveryPointProvider {
   quote(request: ShippingQuoteRequest): Promise<Result<readonly ShippingService[], AppError>> {
     const prefix = request.toPostalCode.slice(0, 2);
     if (prefix === '42') return Promise.resolve(err(appError('dependency_unavailable')));
     if (prefix === '44') return Promise.resolve(ok([]));
-    const recogida: ShippingService = {
-      id: 'fake-recogida',
-      name: 'Recogida a domicilio',
-      modality: 'recogida',
-      priceCents: 620,
-      transitDays: 1,
-    };
+    const svc = (
+      id: string,
+      name: string,
+      carrier: string,
+      modality: ShippingService['modality'],
+      destination: ShippingService['destination'],
+      priceCents: number,
+      transitDays: number,
+    ): ShippingService => ({ id, name, carrier, modality, destination, priceCents, transitDays });
+    const recogida = svc('9001', 'Recogida a domicilio', 'DHL', 'recogida', 'domicilio', 620, 1);
     if (prefix === '26') return Promise.resolve(ok([recogida]));
     return Promise.resolve(
       ok([
-        { id: 'fake-punto-a', name: 'Punto A', modality: 'punto', priceCents: 490, transitDays: 2 },
-        { id: 'fake-punto-b', name: 'Punto B', modality: 'punto', priceCents: 450, transitDays: 3 },
+        svc('9002', 'Punto A', 'Seur', 'punto', 'domicilio', 490, 2),
+        svc('9003', 'Punto B', 'Correos', 'punto', 'domicilio', 450, 3),
+        svc('9004', 'Punto a punto', 'Correos', 'punto', 'punto', 390, 4),
+        svc('9005', 'Recogida a punto', 'GLS', 'recogida', 'punto', 520, 3),
         recogida,
       ]),
+    );
+  }
+
+  /** Doce puntos deterministas por codigo postal (para probar «Mostrar mas»). */
+  getDeliveryPoints(
+    serviceId: string,
+    postalCode: string,
+  ): Promise<Result<readonly DeliveryPoint[], AppError>> {
+    if (postalCode.startsWith('43')) return Promise.resolve(ok([]));
+    return Promise.resolve(
+      ok(
+        Array.from({ length: 12 }, (_, i) => {
+          const n = String(i + 1).padStart(2, '0');
+          return {
+            id: `P${serviceId}-${n}`,
+            name: `Punto ${n}`,
+            address: `Calle Prueba ${i + 1}, ${postalCode}, Ciudad`,
+            schedule: 'L-V 9:00-20:00',
+          };
+        }),
+      ),
     );
   }
 }

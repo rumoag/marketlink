@@ -2,7 +2,8 @@ import { appError, type AppError } from '@/modules/kernel/domain/app-error';
 import type { Instant } from '@/modules/kernel/domain/clock';
 import { err, ok, unwrap, type Result } from '@/modules/kernel/domain/result';
 import { CancelCheckout } from '@/modules/checkout/application/cancel-checkout';
-import { QuoteShipping } from '@/modules/checkout/application/quote-shipping';
+import { ShippingOptionsFinder } from '@/modules/checkout/application/shipping-options';
+import { InMemoryProviderCache } from './memory-cache';
 import { StartCheckout } from '@/modules/checkout/application/start-checkout';
 import { DispatchNotifications } from '@/modules/notifications/application/dispatch';
 import type {
@@ -169,17 +170,18 @@ export const buildU4 = () => {
     provider: payments,
     onPaid: (id) => onPaid.execute(id),
   });
-  const quote = new QuoteShipping({
-    runner: db,
+  const quote = new ShippingOptionsFinder({
     shipping,
-    limiter: h.limiter,
+    points: shipping,
+    cache: new InMemoryProviderCache(),
     alerts,
     clock: h.clock,
     logger: h.logger,
+    cacheTtlMs: 600_000,
   });
   const start = new StartCheckout({
     runner: db,
-    quoter: quote,
+    finder: quote,
     provider: payments,
     limiter: h.limiter,
     alerts,
@@ -318,7 +320,7 @@ export const paidOrder = async (
   const input = checkoutInput(base.slug, {
     ip: `10.9.0.${ipCounter}`,
     expectedTotalCents: options.modality === 'recogida' ? 25_620 : 25_450,
-    acceptedAlternative: options.modality === 'recogida',
+    serviceId: options.modality === 'recogida' ? 'r-1' : 'p-b',
     ...(options.fields ? { fields: options.fields } : {}),
   });
   if (options.modality === 'recogida') {

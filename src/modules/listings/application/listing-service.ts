@@ -16,6 +16,7 @@ import { buildDmText } from '../domain/dm';
 import {
   applyPatch,
   canCreateMore,
+  hasOrigins,
   listingInputSchema,
   listingPatchSchema,
   MAX_OPEN_LISTINGS,
@@ -126,6 +127,9 @@ export class ListingService {
 
     const input = validate(listingInputSchema, rawInput);
     if (!input.ok) return input;
+    if (!hasOrigins(input.value)) {
+      return err(appError('validation', { details: [{ field: 'origins', reason: 'vacio' }] }));
+    }
     const ids = validate(uploadIdsSchema, rawUploadIds);
     if (!ids.ok) {
       return err(appError('validation', { details: [{ field: 'photos', reason: 'invalido' }] }));
@@ -209,6 +213,9 @@ export class ListingService {
   ): Promise<Result<Listing, AppError>> {
     const patch = validate(listingPatchSchema, rawPatch);
     if (!patch.ok) return patch;
+    if (patch.value.origins !== undefined && patch.value.origins.length === 0) {
+      return err(appError('validation', { details: [{ field: 'origins', reason: 'vacio' }] }));
+    }
 
     return this.deps.runner.run(artistScope(artistId), async (repos) => {
       const current = await repos.listings.findByIdForUpdate(listingId);

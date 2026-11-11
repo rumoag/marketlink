@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { requireArtistId, requireServices } from '@/ui/server-context';
-import { createListingAction } from '../../actions';
+import { createListingAction, indicativePricesAction } from '../../actions';
 import { EnlaceForm } from '../enlace-form';
 
 export default async function NuevoEnlacePage() {
@@ -20,6 +20,7 @@ export default async function NuevoEnlacePage() {
         <EnlaceForm
           mode="crear"
           action={createListingAction}
+          pricesAction={indicativePricesAction}
           sizes={sizes}
           initial={{
             title: '',
@@ -28,7 +29,7 @@ export default async function NuevoEnlacePage() {
             declaredValue: '',
             fragile: false,
             size: '',
-            modality: '',
+            origins: '',
           }}
         />
       ) : (

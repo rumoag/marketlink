@@ -11,6 +11,18 @@ export type PausedReason = 'artista' | 'cobros_restringidos';
 export type PackageSize = 'S' | 'M' | 'L';
 export type Modality = 'punto' | 'recogida';
 
+/** U8 (BR8-O1): orden canonico y sin repetidos; al menos un origen. */
+export const normalizeOrigins = (origins: readonly Modality[]): Modality[] => {
+  const out: Modality[] = [];
+  if (origins.includes('punto')) out.push('punto');
+  if (origins.includes('recogida')) out.push('recogida');
+  return out;
+};
+
+/** Compatibilidad con la columna antigua `modality`: punto si se acepta, si no recogida. */
+export const modalityOf = (origins: readonly Modality[]): Modality =>
+  origins.includes('punto') ? 'punto' : 'recogida';
+
 /** BR2-LK3: maximo de enlaces activos o pausados por artista (configurable). */
 export const MAX_OPEN_LISTINGS = 20;
 
@@ -24,7 +36,10 @@ export type Listing = {
   readonly declaredValueCents: number;
   readonly fragile: boolean;
   readonly size: PackageSize;
+  /** Derivada de `origins` (compatibilidad con U2 a U7). */
   readonly modality: Modality;
+  /** U8: origenes que la artista acepta (BR8-O1). */
+  readonly origins: readonly Modality[];
   readonly status: ListingStatus;
   readonly pausedReason: PausedReason | undefined;
   readonly orderId: string | undefined;
@@ -81,9 +96,21 @@ export const listingInputSchema = z.object({
     .optional()
     .transform((f) => f ?? false),
   size: sizeSchema,
-  modality: modalitySchema,
+  /** U8: uno o dos origenes. Se admite `modality` (un solo origen) por compatibilidad. */
+  origins: z.array(modalitySchema).max(2).optional(),
+  modality: modalitySchema.optional(),
 });
 export type ListingInput = z.infer<typeof listingInputSchema>;
+
+/** Origenes efectivos de una entrada o parche: `origins`, o `[modality]`; vacio si no hay ninguno. */
+const originsFrom = (v: {
+  readonly origins?: readonly Modality[] | undefined;
+  readonly modality?: Modality | undefined;
+}): Modality[] | undefined => {
+  if (v.origins !== undefined) return normalizeOrigins(v.origins);
+  if (v.modality !== undefined) return [v.modality];
+  return undefined;
+};
 
 /** Datos validados listos para guardar. El valor declarado vale por defecto el precio (BR2-DT4). */
 export type ListingDraft = {
@@ -94,7 +121,11 @@ export type ListingDraft = {
   readonly fragile: boolean;
   readonly size: PackageSize;
   readonly modality: Modality;
+  readonly origins: readonly Modality[];
 };
+
+/** BR8-O1: sin ningun origen la entrada no es valida (la capa de aplicacion lo rechaza). */
+export const hasOrigins = (input: ListingInput): boolean => (originsFrom(input) ?? []).length > 0;
 
 export const toDraft = (input: ListingInput): ListingDraft => ({
   title: input.title,
@@ -103,7 +134,8 @@ export const toDraft = (input: ListingInput): ListingDraft => ({
   declaredValueCents: (input.declaredValue ?? input.price).cents,
   fragile: input.fragile,
   size: input.size,
-  modality: input.modality,
+  modality: modalityOf(originsFrom(input) ?? ['punto']),
+  origins: originsFrom(input) ?? ['punto'],
 });
 
 /** Parche de edicion: todos los campos son opcionales. */
@@ -114,6 +146,7 @@ export const listingPatchSchema = z.object({
   declaredValue: listingPriceSchema.optional(),
   fragile: z.boolean().optional(),
   size: sizeSchema.optional(),
+  origins: z.array(modalitySchema).max(2).optional(),
   modality: modalitySchema.optional(),
 });
 export type ListingPatch = z.infer<typeof listingPatchSchema>;
@@ -123,7 +156,17 @@ export const touchesReservedFields = (patch: ListingPatch): boolean =>
   patch.price !== undefined ||
   patch.declaredValue !== undefined ||
   patch.size !== undefined ||
+  patch.origins !== undefined ||
   patch.modality !== undefined;
+
+const patchedOrigins = (
+  listing: Listing,
+  patch: ListingPatch,
+): { origins: readonly Modality[]; modality: Modality } => {
+  const next = originsFrom(patch);
+  const origins = next !== undefined && next.length > 0 ? next : listing.origins;
+  return { origins, modality: modalityOf(origins) };
+};
 
 /**
  * Aplica un parche ya validado (P-U2-14).
@@ -155,7 +198,7 @@ export const applyPatch = (
     declaredValueCents,
     fragile: patch.fragile ?? listing.fragile,
     size: patch.size ?? listing.size,
-    modality: patch.modality ?? listing.modality,
+    ...patchedOrigins(listing, patch),
     updatedAt: now,
   });
 };

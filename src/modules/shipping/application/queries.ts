@@ -3,7 +3,12 @@ import type { Clock } from '@/modules/kernel/domain/clock';
 import { err, ok, type Result } from '@/modules/kernel/domain/result';
 import type { Notification } from '@/modules/notifications/domain/notification';
 import type { GetTracking, TrackingResult } from '@/modules/orders/application/queries';
-import type { Order, OrderEvent } from '@/modules/orders/domain/order';
+import {
+  deliverySummary,
+  type DeliverySummary,
+  type Order,
+  type OrderEvent,
+} from '@/modules/orders/domain/order';
 import { hashTrackingToken, isWellFormedToken } from '@/modules/orders/domain/tracking-token';
 import { systemScope } from '@/modules/platform/application/unit-of-work';
 import type { Shipment } from '../domain/entity';
@@ -17,6 +22,8 @@ export type ArtistOrderDetail = {
   readonly title: string;
   readonly status: Order['status'];
   readonly modality: Order['effectiveModality'];
+  /** U8: servicio, transportista, plazo y destino elegidos por la compradora (US-065). */
+  readonly delivery: DeliverySummary;
   readonly totalCents: number;
   readonly workPriceCents: number;
   readonly shippingCents: number;
@@ -71,6 +78,7 @@ export class GetArtistOrder {
       title: order.snapshot.title,
       status: order.status,
       modality: order.effectiveModality,
+      delivery: deliverySummary(order),
       totalCents: order.totalCents,
       workPriceCents: order.workPriceCents,
       shippingCents: order.shippingCents,

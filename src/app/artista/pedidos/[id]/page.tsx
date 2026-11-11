@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Money } from '@/modules/kernel/domain/money';
+import { deliveryText } from '@/ui/delivery-text';
 import { requireArtistId, requireServices } from '@/ui/server-context';
 import { chooseDraftPickupAction } from '../../actions';
 
@@ -48,6 +49,17 @@ export default async function PedidoDetallePage({
       >
         {o.next.text}
       </p>
+      <section aria-label="Cómo se envía" className="flex flex-col gap-1">
+        <h2 className="text-xl font-semibold">Cómo se envía</h2>
+        <p data-testid="pedido-servicio">{deliveryText(o.delivery)}</p>
+        {o.delivery.point ? (
+          <p data-testid="pedido-destino">
+            Punto de recogida: <strong>{o.delivery.point.name}</strong>, {o.delivery.point.address}
+          </p>
+        ) : o.delivery.destination === 'domicilio' ? (
+          <p data-testid="pedido-destino">A domicilio de la compradora.</p>
+        ) : null}
+      </section>
       {recogida && PICKUP_MESSAGES[recogida] ? (
         <p role="status" data-testid="pedido-recogida-mensaje" className="rounded-md border p-3">
           {PICKUP_MESSAGES[recogida]}

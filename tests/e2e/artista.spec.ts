@@ -65,7 +65,7 @@ async function createListing(page: Page, title = 'Óleo sobre lienzo'): Promise<
   await page.getByTestId('enlace-descripcion-input').fill('Una obra de prueba');
   await page.getByTestId('enlace-precio-input').fill('250');
   await page.getByTestId('enlace-tamano-radio-m').check();
-  await page.getByTestId('enlace-modalidad-radio-punto').check();
+  await page.getByTestId('enlace-origen-punto-check').check();
   await page.getByTestId('enlace-guardar-button').click();
   await expect(page.getByTestId('detalle-creado')).toBeVisible();
   return page.url().split('/artista/enlaces/')[1]?.split('?')[0] ?? '';

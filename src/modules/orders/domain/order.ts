@@ -57,12 +57,21 @@ export type SenderSnapshot = {
 
 /** Datos personales de la compradora: solo aqui (y en `Destination`). */
 export type Buyer = { readonly name: string; readonly email: string; readonly phone: string };
+/** U8: punto de recogida elegido por la compradora. Vive dentro de `Destination` (se purga con ella). */
+export type DeliveryPointRef = {
+  readonly id: string;
+  readonly name: string;
+  readonly address: string;
+  readonly schedule: string;
+};
 export type Destination = {
   readonly street: string;
   readonly complement: string;
   readonly postalCode: string;
   readonly city: string;
   readonly province: string;
+  /** Solo si el servicio elegido entrega en un punto (BR8-PT). */
+  readonly point?: DeliveryPointRef | undefined;
 };
 
 export type QuoteRef = {
@@ -71,6 +80,9 @@ export type QuoteRef = {
   readonly transitDays: number;
   readonly priceCents: number;
   readonly modality: Modality;
+  /** U8: pedidos anteriores no lo tienen (se muestra solo el servicio). */
+  readonly carrier?: string | undefined;
+  readonly destination?: 'domicilio' | 'punto' | undefined;
 };
 
 export type Consent = {
@@ -381,3 +393,24 @@ export const purgePersonalData = (order: Order, now: Instant): Order =>
         personalPurgedAt: now,
         updatedAt: now,
       };
+
+/**
+ * U8 (US-064, US-065, US-070): como se entrega el pedido. Pedidos anteriores a U8 no guardan el destino
+ * ni el transportista: solo se muestra el servicio (BR8-H1). El punto vive en `destination` y
+ * desaparece con la purga de datos personales.
+ */
+export type DeliverySummary = {
+  readonly serviceName: string;
+  readonly carrier: string | undefined;
+  readonly transitDays: number;
+  readonly destination: 'domicilio' | 'punto' | undefined;
+  readonly point: DeliveryPointRef | undefined;
+};
+
+export const deliverySummary = (order: Pick<Order, 'quote' | 'destination'>): DeliverySummary => ({
+  serviceName: order.quote.serviceName,
+  carrier: order.quote.carrier,
+  transitDays: order.quote.transitDays,
+  destination: order.quote.destination,
+  point: order.destination?.point,
+});

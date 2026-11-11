@@ -76,17 +76,19 @@ export function SubmitButton({
   children,
   pendingText = 'Guardando…',
   testId,
+  disabled = false,
 }: {
   children: ReactNode;
   pendingText?: string;
   testId: string;
+  disabled?: boolean;
 }) {
   const { pending } = useFormStatus();
   return (
     <button
       type="submit"
-      disabled={pending}
-      aria-disabled={pending}
+      disabled={pending || disabled}
+      aria-disabled={pending || disabled}
       data-testid={testId}
       className="min-h-11 w-fit rounded-md bg-[color:var(--color-acento)] px-5 py-2 font-medium text-[color:var(--color-acento-texto)] disabled:opacity-60"
     >

@@ -33,33 +33,33 @@ const payAndNotify = async (u: U3, order: Order) => {
   return u.processor.execute(fact!, 'c');
 };
 
-describe('U3 cotizar envio (US-017 a US-019)', () => {
-  it('elige el servicio mas barato de la modalidad del enlace', async () => {
+describe('U3 cotizar envio (US-017 a US-019, U8)', () => {
+  it('preselecciona el servicio mas barato a domicilio de los origenes del enlace', async () => {
     const u = buildU3();
     const { slug } = await sellableListing(u);
     const r = unwrap(await u.quote.execute(slug, '08001', '1.1.1.1', 'c'));
-    expect(r.kind).toBe('cotizacion');
-    if (r.kind === 'cotizacion' && r.quote.kind === 'disponible') {
-      expect(r.quote.service.id).toBe('p-b');
-      expect(r.quote.totals.totalCents).toBe(25_450);
-    } else throw new Error('esperaba disponible');
+    expect(r.kind).toBe('opciones');
+    if (r.kind !== 'opciones') throw new Error('esperaba opciones');
+    expect(r.options.preselected?.id).toBe('p-b');
+    expect(r.options.groups.domicilio.map((s) => s.id)).toEqual(['p-b', 'p-a']);
   });
 
-  it('ofrece la otra modalidad si no hay servicio de la del enlace', async () => {
+  it('no ofrece un origen que la artista no acepta: sin envio y aviso al operador', async () => {
     const u = buildU3();
     u.shipping.services = u.shipping.services.filter((s) => s.modality === 'recogida');
     const { slug } = await sellableListing(u);
     const r = unwrap(await u.quote.execute(slug, '08001', '1.1.1.1', 'c'));
-    expect(r.kind === 'cotizacion' && r.quote.kind).toBe('solo_alternativa');
+    expect(r.kind).toBe('sin_envio');
+    expect(u.alerts.raised.filter((a) => a.code === 'packlink_no_disponible')).toHaveLength(1);
   });
 
-  it('proveedor caido: sin envio y aviso al operador (una sola vez por enlace y codigo postal)', async () => {
+  it('proveedor caido: error de dependencia y aviso al operador (una sola vez)', async () => {
     const u = buildU3();
     u.shipping.fail = true;
     const { slug } = await sellableListing(u);
     for (let i = 0; i < 3; i++) {
-      const r = unwrap(await u.quote.execute(slug, '08001', '1.1.1.1', 'c'));
-      expect(r.kind === 'cotizacion' && r.quote.kind).toBe('sin_envio');
+      const r = await u.quote.execute(slug, '08001', '1.1.1.1', 'c');
+      expect(!r.ok && r.error.code).toBe('dependency_unavailable');
     }
     expect(u.alerts.raised.filter((a) => a.code === 'packlink_no_disponible')).toHaveLength(1);
   });
@@ -70,7 +70,7 @@ describe('U3 cotizar envio (US-017 a US-019)', () => {
     const bad = await u.quote.execute(slug, '07001', '1.1.1.1', 'c');
     expect(!bad.ok && bad.error.code).toBe('validation');
     let last = bad;
-    for (let i = 0; i < 25; i++) last = await u.quote.execute(slug, '08001', '2.2.2.2', 'c');
+    for (let i = 0; i < 65; i++) last = await u.quote.execute(slug, '08001', '2.2.2.2', 'c');
     expect(!last.ok && last.error.code).toBe('rate_limited');
   });
 });
@@ -170,16 +170,86 @@ describe('U3 iniciar el pago y vender (US-020, US-022, US-025)', () => {
     expect(orders(u)).toHaveLength(0);
   });
 
-  it('la alternativa exige aceptacion explicita', async () => {
+  it('ya no se ofrece una alternativa de otro origen: sin envio y sin pedido (BR8-S1)', async () => {
     const u = buildU3();
     u.shipping.services = u.shipping.services.filter((s) => s.modality === 'recogida');
     const { slug } = await sellableListing(u);
-    const first = await start(u, slug, { expectedTotalCents: 25_620 });
-    expect(first.kind).toBe('alternative_required');
-    const ok = await start(u, slug, { expectedTotalCents: 25_620, acceptedAlternative: true });
+    const first = await start(u, slug, { expectedTotalCents: 25_620, serviceId: 'r-1' });
+    expect(first.kind).toBe('no_shipping');
+    expect(orders(u)).toHaveLength(0);
+  });
+
+  it('un servicio que no esta entre las opciones no cobra nada y queda auditado', async () => {
+    const u = buildU3();
+    const { slug } = await sellableListing(u);
+    const r = await start(u, slug, { serviceId: 'inventado' });
+    expect(r.kind).toBe('servicio_no_disponible');
+    expect(orders(u)).toHaveLength(0);
+    expect(u.auditStore.events.some((e) => e.action === 'delivery_selection_rejected')).toBe(true);
+  });
+
+  it('el servicio elegido fija el importe y se guarda con transportista y destino', async () => {
+    const u = buildU3();
+    const { slug } = await sellableListing(u);
+    const r = await start(u, slug, { serviceId: 'p-a', expectedTotalCents: 25_490 });
+    expect(r.kind).toBe('redirect');
+    expect(only(u).shippingCents).toBe(490);
+    expect(only(u).quote).toMatchObject({
+      serviceId: 'p-a',
+      carrier: 'Seur',
+      destination: 'domicilio',
+    });
+  });
+
+  it('un servicio con destino punto exige un punto de la lista actual y lo guarda en el destino', async () => {
+    const u = buildU3();
+    u.shipping.services = [
+      ...u.shipping.services,
+      {
+        id: 'pp-1',
+        name: 'Punto a punto',
+        carrier: 'Correos',
+        modality: 'punto',
+        destination: 'punto',
+        priceCents: 390,
+        transitDays: 4,
+      },
+    ];
+    const { slug } = await sellableListing(u);
+    const missing = await u.startCheckout.execute(
+      checkoutInput(slug, { serviceId: 'pp-1', expectedTotalCents: 25_390 }),
+    );
+    expect(!missing.ok && missing.error.code).toBe('validation');
+    const unknown = await start(u, slug, {
+      serviceId: 'pp-1',
+      pointId: 'NO-EXISTE',
+      expectedTotalCents: 25_390,
+    });
+    expect(unknown.kind).toBe('punto_no_disponible');
+    expect(orders(u)).toHaveLength(0);
+    const ok = await start(u, slug, {
+      serviceId: 'pp-1',
+      pointId: 'PT2',
+      expectedTotalCents: 25_390,
+    });
     expect(ok.kind).toBe('redirect');
-    expect(only(u).alternativeAccepted).toBe(true);
-    expect(only(u).effectiveModality).toBe('recogida');
+    expect(only(u).destination?.point).toMatchObject({ id: 'PT2', name: 'Kiosco 2' });
+  });
+
+  it('un punto con un servicio a domicilio se rechaza (BR8-V4)', async () => {
+    const u = buildU3();
+    const { slug } = await sellableListing(u);
+    const r = await u.startCheckout.execute(checkoutInput(slug, { pointId: 'PT1' }));
+    expect(!r.ok && r.error.code).toBe('validation');
+    expect(orders(u)).toHaveLength(0);
+  });
+
+  it('proveedor caido al pagar: no se cobra y se avisa (shipping_down)', async () => {
+    const u = buildU3();
+    u.shipping.fail = true;
+    const { slug } = await sellableListing(u);
+    expect((await start(u, slug)).kind).toBe('shipping_down');
+    expect(orders(u)).toHaveLength(0);
   });
 
   it('limita las reservas por IP (5 por hora)', async () => {

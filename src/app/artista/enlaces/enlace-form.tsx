@@ -1,6 +1,7 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useEffect, useState } from 'react';
+import { Money } from '@/modules/kernel/domain/money';
 import { FormMessage, Notice, SubmitButton, TextField } from '@/ui/controls';
 import type { FormState } from '@/ui/form-state';
 import { PhotoPicker } from '@/ui/photo-picker';
@@ -13,7 +14,8 @@ export type EnlaceFormValues = {
   declaredValue: string;
   fragile: boolean;
   size: 'S' | 'M' | 'L' | '';
-  modality: 'punto' | 'recogida' | '';
+  /** Origenes aceptados, separados por comas: «punto», «recogida» o «punto,recogida». */
+  origins: string;
 };
 
 type Props = {
@@ -21,16 +23,18 @@ type Props = {
   action: (prev: FormState, formData: FormData) => Promise<FormState>;
   sizes: readonly SizePreset[];
   initial: EnlaceFormValues;
-  /** Hay un pago en curso: precio, valor declarado, tamano y modalidad no se pueden cambiar. */
+  /** Hay un pago en curso: precio, valor declarado, tamano y origenes no se pueden cambiar. */
   locked?: boolean;
+  /** «Desde X €» por origen para el tamano elegido (US-054). */
+  pricesAction: (size: string) => Promise<{ punto?: number; recogida?: number }>;
 };
 
-const MODALITIES = [
-  { value: 'punto', label: 'La llevo yo a un punto (más barato)' },
-  { value: 'recogida', label: 'Que la recojan en casa' },
+const ORIGINS = [
+  { value: 'punto', label: 'Llevarla a un punto u oficina' },
+  { value: 'recogida', label: 'Que la recojan en mi casa' },
 ] as const;
 
-export function EnlaceForm({ mode, action, sizes, initial, locked = false }: Props) {
+export function EnlaceForm({ mode, action, sizes, initial, locked = false, pricesAction }: Props) {
   const [state, formAction] = useActionState(action, {});
   const v = state.values;
   const e = state.fieldErrors;
@@ -38,8 +42,34 @@ export function EnlaceForm({ mode, action, sizes, initial, locked = false }: Pro
     const own = v?.[key];
     return own ?? String(initial[key]);
   };
-  const size = get('size');
-  const modality = get('modality');
+  const [size, setSize] = useState<string>(get('size'));
+  const origins = get('origins')
+    .split(',')
+    .filter((o) => o !== '');
+  const [prices, setPrices] = useState<{ punto?: number; recogida?: number } | undefined>(
+    undefined,
+  );
+  const [loadingPrices, setLoadingPrices] = useState(false);
+
+  // Precio orientativo por origen; se vuelve a pedir al cambiar el tamano (BR8-O5).
+  useEffect(() => {
+    if (size === '') return;
+    let cancelled = false;
+    setLoadingPrices(true);
+    void pricesAction(size)
+      .then((p) => {
+        if (!cancelled) setPrices(p);
+      })
+      .catch(() => {
+        if (!cancelled) setPrices({});
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPrices(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [size, pricesAction]);
 
   return (
     <form action={formAction} className="flex flex-col gap-5" noValidate>
@@ -84,7 +114,8 @@ export function EnlaceForm({ mode, action, sizes, initial, locked = false }: Pro
               type="radio"
               name="size"
               value={s.size}
-              defaultChecked={size === s.size}
+              checked={size === s.size}
+              onChange={() => setSize(s.size)}
               required
               data-testid={`enlace-tamano-radio-${s.size.toLowerCase()}`}
               className="mt-1 h-5 w-5"
@@ -106,24 +137,45 @@ export function EnlaceForm({ mode, action, sizes, initial, locked = false }: Pro
       </fieldset>
 
       <fieldset className="flex flex-col gap-2" disabled={locked}>
-        <legend className="font-medium">¿Cómo la envías?</legend>
-        {MODALITIES.map((m) => (
-          <label key={m.value} className="flex min-h-11 items-center gap-3 rounded-md border p-3">
+        <legend className="font-medium">¿Cómo puedes enviar la obra?</legend>
+        <input type="hidden" name="originsPresent" value="1" />
+        {ORIGINS.map((o) => (
+          <label key={o.value} className="flex min-h-11 items-center gap-3 rounded-md border p-3">
             <input
-              type="radio"
-              name="modality"
-              value={m.value}
-              defaultChecked={modality === m.value}
-              required
-              data-testid={`enlace-modalidad-radio-${m.value}`}
+              type="checkbox"
+              name="origins"
+              value={o.value}
+              defaultChecked={origins.includes(o.value)}
+              data-testid={`enlace-origen-${o.value}-check`}
               className="h-5 w-5"
             />
-            <span>{m.label}</span>
+            <span className="flex-1">{o.label}</span>
+            <span
+              data-testid={`enlace-precio-${o.value}`}
+              className="text-sm text-[color:var(--color-texto-suave)]"
+            >
+              {prices?.[o.value] !== undefined
+                ? `desde ${Money.format({ cents: prices[o.value] as number, currency: 'EUR' })}`
+                : '—'}
+            </span>
           </label>
         ))}
-        {e?.modality ? (
-          <p role="alert" className="text-sm font-medium text-red-700 dark:text-red-300">
-            {e.modality}
+        <p
+          role="status"
+          aria-live="polite"
+          className="text-sm text-[color:var(--color-texto-suave)]"
+        >
+          {loadingPrices
+            ? 'Calculando precios…'
+            : 'Precio orientativo para un envío a Madrid; el real depende del destino. Marca todas las que puedas hacer: el comprador elegirá entre ellas.'}
+        </p>
+        {e?.origins ? (
+          <p
+            role="alert"
+            data-testid="enlace-origen-error"
+            className="text-sm font-medium text-red-700 dark:text-red-300"
+          >
+            {e.origins}
           </p>
         ) : null}
       </fieldset>

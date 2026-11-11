@@ -108,6 +108,7 @@ export class CreateShipmentDraft {
           email: order.buyer.email,
           phone: order.buyer.phone,
           ...order.destination,
+          pointId: order.destination.point?.id,
         },
         parcel: { size: order.snapshot.size, ...listing.parcel },
         declaredValueCents: order.snapshot.declaredValueCents,

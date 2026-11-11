@@ -42,6 +42,7 @@ export const createListingSales = (
       fragile: listing.fragile,
       size: listing.size,
       modality: listing.modality,
+      origins: listing.origins,
       artisticName: artist.artisticName,
       instagram: artist.instagram,
       sender: {

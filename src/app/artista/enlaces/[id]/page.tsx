@@ -6,6 +6,7 @@ import { requireArtistId, requireServices } from '@/ui/server-context';
 import { StatusBadge } from '@/ui/status-badge';
 import {
   addPhotosAction,
+  indicativePricesAction,
   pauseListingAction,
   removePhotoAction,
   resumeListingAction,
@@ -147,6 +148,7 @@ export default async function EnlaceDetallePage({
           <EnlaceForm
             mode="editar"
             action={updateListingAction.bind(null, listing.id)}
+            pricesAction={indicativePricesAction}
             sizes={sizes}
             locked={reserved}
             initial={{
@@ -159,7 +161,7 @@ export default async function EnlaceDetallePage({
                   : eurosForInput(listing.declaredValueCents),
               fragile: listing.fragile,
               size: listing.size,
-              modality: listing.modality,
+              origins: listing.origins.join(','),
             }}
           />
         </section>

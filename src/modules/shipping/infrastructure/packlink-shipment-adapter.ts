@@ -148,6 +148,7 @@ export class PacklinkShipmentAdapter implements ShipmentProvider {
         },
       ],
       service_id: input.serviceId,
+      ...(input.recipient.pointId ? { dropoff_point_id: input.recipient.pointId } : {}),
       content: 'Obra de arte',
       contentvalue: input.declaredValueCents / 100,
       shipment_custom_reference: input.reference,

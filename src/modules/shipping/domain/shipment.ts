@@ -257,11 +257,13 @@ export const payReminderDue = (input: {
   remindedAt: Instant | undefined;
   status: ShipmentStatus;
   now: Instant;
+  /** U8: umbral configurable (UNPAID_DRAFT_ALERT_HOURS); por defecto 24 h. */
+  thresholdMs?: number;
 }): boolean =>
   input.status === 'borrador' &&
   input.draftCreatedAt !== undefined &&
   input.remindedAt === undefined &&
-  input.now - input.draftCreatedAt >= PAY_REMINDER_MS;
+  input.now - input.draftCreatedAt >= (input.thresholdMs ?? PAY_REMINDER_MS);
 
 // ---------------------------------------------------------------------------------------------
 // Margen del envio (BR4-CO1, P-U4-14)

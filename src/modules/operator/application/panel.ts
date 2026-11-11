@@ -14,7 +14,7 @@ import {
   systemScope,
   type TransactionRunner,
 } from '@/modules/platform/application/unit-of-work';
-import type { Order } from '@/modules/orders/domain/order';
+import { deliverySummary, type DeliverySummary, type Order } from '@/modules/orders/domain/order';
 import {
   computeMetrics,
   countsAsVisit,
@@ -192,6 +192,8 @@ export type OrderDetail = {
       reason: string | undefined;
     }[]
   >;
+  /** U8 (US-070): servicio, transportista, plazo y destino elegidos. */
+  readonly delivery: DeliverySummary;
   readonly shipment: Section<
     | {
         status: string;
@@ -303,7 +305,17 @@ export class GetOrderDetail extends PanelService {
       now,
       deps.staleDays,
     );
-    return ok({ order, artistName, events, shipment, money, flags, notes, stuck });
+    return ok({
+      order,
+      delivery: deliverySummary(order),
+      artistName,
+      events,
+      shipment,
+      money,
+      flags,
+      notes,
+      stuck,
+    });
   }
 }
 

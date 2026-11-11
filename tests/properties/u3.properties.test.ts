@@ -5,10 +5,9 @@ import { unwrap } from '@/modules/kernel/domain/result';
 import { buyerInputSchema, normalizeLine } from '@/modules/checkout/domain/buyer-input';
 import { hashResumeId, newResumeId, resumeStillValid } from '@/modules/checkout/domain/consent';
 import {
-  chooseQuoteOutcome,
+  buildOptions,
   compareServices,
   isValidService,
-  selectService,
   type ShippingService,
 } from '@/modules/checkout/domain/quote';
 import {
@@ -44,7 +43,9 @@ const modalityArb = fc.constantFrom<Modality>('punto', 'recogida');
 const serviceArb = fc.record<ShippingService>({
   id: fc.stringMatching(/^[a-z0-9-]{1,12}$/),
   name: fc.constant('Servicio'),
+  carrier: fc.constant('Correos'),
   modality: modalityArb,
+  destination: fc.constantFrom<'domicilio' | 'punto'>('domicilio', 'punto'),
   priceCents: fc.integer({ min: 1, max: 10_000 }),
   transitDays: fc.integer({ min: 0, max: 10 }),
 });
@@ -60,39 +61,35 @@ const triggerArb: fc.Arbitrary<Trigger> = fc.oneof(
   fc.constant<Trigger>({ type: 'refund_done' }),
 );
 
-// P-U3-01 ---------------------------------------------------------------------------------------
+// P-U3-01 (evolucionada en U8) -------------------------------------------------------------------
 describe('P-U3-01 seleccion del servicio', () => {
-  it('es el mas barato de la modalidad y no depende del orden', () => {
+  it('la preseleccion es el servicio mas barato a domicilio de los origenes aceptados', () => {
     fc.assert(
       fc.property(servicesArb, modalityArb, (services, modality) => {
-        const chosen = selectService(services, modality);
-        const pool = services.filter((s) => s.modality === modality);
-        if (pool.length === 0) {
-          expect(chosen).toBeUndefined();
-          return;
+        const options = buildOptions(services, new Set([modality]));
+        const pool = services.filter(
+          (s) => s.modality === modality && s.destination === 'domicilio',
+        );
+        if (pool.length > 0) {
+          const chosen = options.preselected as ShippingService;
+          expect(chosen.destination).toBe('domicilio');
+          for (const s of pool) expect(compareServices(chosen, s)).toBeLessThanOrEqual(0);
         }
-        expect(chosen?.modality).toBe(modality);
-        for (const s of pool)
-          expect(compareServices(chosen as ShippingService, s)).toBeLessThanOrEqual(0);
-        const reversed = selectService([...services].reverse(), modality);
-        expect(reversed?.priceCents).toBe(chosen?.priceCents);
-        expect(reversed?.transitDays).toBe(chosen?.transitDays);
+        const reversed = buildOptions([...services].reverse(), new Set([modality]));
+        expect(reversed.preselected?.id).toBe(options.preselected?.id);
       }),
     );
   });
 });
 
-// P-U3-02 ---------------------------------------------------------------------------------------
+// P-U3-02 (evolucionada en U8) -------------------------------------------------------------------
 describe('P-U3-02 resultado de la cotizacion', () => {
-  it('disponible, solo alternativa o no disponible segun haya servicios', () => {
+  it('hay opcion si y solo si algun servicio es de un origen aceptado (sin alternativa)', () => {
     fc.assert(
       fc.property(servicesArb, modalityArb, (services, modality) => {
-        const out = chooseQuoteOutcome(services, modality);
-        const has = (m: Modality) => services.some((s) => s.modality === m);
-        const other: Modality = modality === 'punto' ? 'recogida' : 'punto';
-        if (has(modality)) expect(out.kind).toBe('disponible');
-        else if (has(other)) expect(out.kind).toBe('solo_alternativa');
-        else expect(out.kind).toBe('no_disponible');
+        const options = buildOptions(services, new Set([modality]));
+        const has = services.some((s) => s.modality === modality);
+        expect(options.preselected !== undefined).toBe(has);
       }),
     );
   });
@@ -489,7 +486,9 @@ describe('P-U3-19 validacion de la respuesta del proveedor', () => {
           const s = {
             id: 'x',
             name: 'n',
+            carrier: 'c',
             modality: 'punto',
+            destination: 'domicilio',
             priceCents: price,
             transitDays: 2,
           };

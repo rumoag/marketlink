@@ -34,6 +34,7 @@ const draft = {
   fragile: false,
   size: 'M',
   modality: 'punto',
+  origins: ['punto'],
 } as const;
 
 const enabled = (eventAt: number) => ({

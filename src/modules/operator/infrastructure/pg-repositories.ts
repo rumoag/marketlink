@@ -444,12 +444,18 @@ export class PgOperatorRepository implements OperatorRepository {
   async counts(
     now: number,
     staleDays: number,
-  ): Promise<{ stuck: number; unpaidDrafts: number; openFlags: number }> {
+  ): Promise<{
+    stuck: number;
+    unpaidDrafts: number;
+    openFlags: number;
+    oldestUnpaidDraftHours: number | undefined;
+  }> {
     const where = whereOf({ stuckOnly: true }, now, staleDays);
     const [stuck, drafts, flags] = await Promise.all([
       this.q.query<{ n: string }>(`SELECT count(*)::text AS n ${FROM} ${where.sql}`, where.params),
-      this.q.query<{ n: string }>(
-        `SELECT count(*)::text AS n FROM shipments WHERE status = 'borrador'`,
+      this.q.query<{ n: string; oldest: Date | null }>(
+        `SELECT count(*)::text AS n, min(draft_created_at) AS oldest
+           FROM shipments WHERE status = 'borrador'`,
       ),
       this.q.query<{ n: string }>(
         'SELECT count(*)::text AS n FROM order_flags WHERE closed_at IS NULL',
@@ -459,6 +465,9 @@ export class PgOperatorRepository implements OperatorRepository {
       stuck: Number(stuck.rows[0]?.n ?? 0),
       unpaidDrafts: Number(drafts.rows[0]?.n ?? 0),
       openFlags: Number(flags.rows[0]?.n ?? 0),
+      oldestUnpaidDraftHours: drafts.rows[0]?.oldest
+        ? Math.max(0, Math.floor((now - drafts.rows[0].oldest.getTime()) / 3_600_000))
+        : undefined,
     };
   }
 

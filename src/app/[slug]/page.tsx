@@ -9,7 +9,7 @@ import { Money } from '@/modules/kernel/domain/money';
 import { RESUME_COOKIE_NAME, newSubmissionKey } from '@/modules/checkout/domain/consent';
 import { requireServices } from '@/ui/server-context';
 import { legalFacts } from '@/ui/legal';
-import { quoteShippingAction, startCheckoutAction } from './actions';
+import { listPointsAction, quoteOptionsAction, startCheckoutAction } from './actions';
 import { CompraForm } from './compra-form';
 
 export const dynamic = 'force-dynamic';
@@ -125,11 +125,11 @@ export default async function ObraPage({ params }: { params: Promise<{ slug: str
         </p>
       ) : (
         <CompraForm
-          quoteAction={quoteShippingAction.bind(null, slug)}
+          quoteAction={quoteOptionsAction.bind(null, slug)}
+          pointsAction={listPointsAction.bind(null, slug)}
           payAction={startCheckoutAction.bind(null, slug, newSubmissionKey())}
           initial={resume?.fields ?? {}}
           manualEnabled={services.manualEnabled}
-          listingModality={listing.modality ?? 'punto'}
         />
       )}
       <footer className="text-sm text-[color:var(--color-texto-suave)]">

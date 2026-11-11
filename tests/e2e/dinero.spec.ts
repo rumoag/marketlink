@@ -69,7 +69,7 @@ async function publishedListing(
   await page.getByTestId('enlace-titulo-input').fill('Óleo sobre lienzo');
   await page.getByTestId('enlace-precio-input').fill('250');
   await page.getByTestId('enlace-tamano-radio-m').check();
-  await page.getByTestId('enlace-modalidad-radio-punto').check();
+  await page.getByTestId('enlace-origen-punto-check').check();
   await page.getByTestId('enlace-guardar-button').click();
   await expect(page.getByTestId('detalle-creado')).toBeVisible();
   const dm = await page.getByTestId('dm-texto-textarea').inputValue();

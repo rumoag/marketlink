@@ -52,7 +52,9 @@ export type AuditAction =
   | 'operator_refund'
   // U7
   | 'personal_data_erased'
-  | 'security_alert';
+  | 'security_alert'
+  // U8
+  | 'delivery_selection_rejected';
 
 export type ActorType = 'artist' | 'operator' | 'buyer' | 'system' | 'anonymous';
 export type Outcome = 'success' | 'denied' | 'failure';

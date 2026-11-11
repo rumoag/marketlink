@@ -61,6 +61,8 @@ export type DraftInput = {
     readonly postalCode: string;
     readonly city: string;
     readonly province: string;
+    /** U8: identificador del punto de recogida cuando el servicio entrega en un punto. */
+    readonly pointId?: string | undefined;
   };
   readonly parcel: {
     readonly size: PackageSize;

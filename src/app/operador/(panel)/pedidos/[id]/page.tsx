@@ -15,6 +15,7 @@ import {
   retryDraftAction,
 } from '../../actions';
 import { OperatorActionForm } from '../../operator-form';
+import { deliveryText } from '@/ui/delivery-text';
 
 export const dynamic = 'force-dynamic';
 
@@ -86,6 +87,12 @@ export default async function OperadorFichaPage({ params }: { params: Promise<{ 
         <h2 id="envio" className="text-xl font-semibold">
           Envío
         </h2>
+        <p data-testid="op-ficha-servicio">{deliveryText(d.delivery)}</p>
+        {d.delivery.point ? (
+          <p data-testid="op-ficha-punto">
+            Punto: {d.delivery.point.name}, {d.delivery.point.address}
+          </p>
+        ) : null}
         {!d.shipment.ok ? (
           <Unavailable name="envio" />
         ) : d.shipment.value ? (

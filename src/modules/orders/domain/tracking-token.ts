@@ -1,6 +1,6 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { sha256Hex } from '@/modules/kernel/domain/hash';
-import type { Order, OrderStatus } from './order';
+import { deliverySummary, type DeliverySummary, type Order, type OrderStatus } from './order';
 
 /**
  * Token de seguimiento (BR3-SG*, NFR-U3-17/18). 256 bits derivados con HMAC-SHA-256 de un secreto
@@ -67,6 +67,8 @@ export type TrackingView = {
   readonly shippingCents: number;
   readonly totalCents: number;
   readonly createdAtMs: number;
+  /** U8: como se entrega (US-064). El punto desaparece tras la purga. */
+  readonly delivery: DeliverySummary;
 };
 
 export const trackingStatusText = (status: OrderStatus): string => {
@@ -106,4 +108,5 @@ export const toTrackingView = (order: Order): TrackingView => ({
   shippingCents: order.shippingCents,
   totalCents: order.totalCents,
   createdAtMs: order.createdAt,
+  delivery: deliverySummary(order),
 });

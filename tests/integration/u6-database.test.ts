@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { MS } from '@/modules/kernel/domain/clock';
 import { unwrap } from '@/modules/kernel/domain/result';
-import { QuoteShipping } from '@/modules/checkout/application/quote-shipping';
+import { ShippingOptionsFinder } from '@/modules/checkout/application/shipping-options';
+import { InMemoryProviderCache } from '../support/memory-cache';
 import { StartCheckout } from '@/modules/checkout/application/start-checkout';
 import {
   factFromEvent,
@@ -112,7 +113,15 @@ describeDb('U6: panel del operador con el rol de la aplicacion (Postgres real)',
       audit,
       logger,
     });
-    const quoter = new QuoteShipping({ runner, shipping, limiter, alerts, clock, logger });
+    const quoter = new ShippingOptionsFinder({
+      shipping,
+      points: shipping,
+      cache: new InMemoryProviderCache(),
+      alerts,
+      clock,
+      logger,
+      cacheTtlMs: 600_000,
+    });
     const onPaid = new OnOrderPaid({ runner, clock, ids, enqueueDraft: () => Promise.resolve() });
     const processor = new ProcessPaymentFact({
       runner,
@@ -126,7 +135,7 @@ describeDb('U6: panel del operador con el rol de la aplicacion (Postgres real)',
     });
     const start = new StartCheckout({
       runner,
-      quoter,
+      finder: quoter,
       provider: payments,
       limiter,
       alerts,

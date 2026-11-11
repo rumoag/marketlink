@@ -13,6 +13,7 @@ import {
 import { applyOrderTrigger } from '@/modules/orders/application/apply-trigger';
 import {
   SubmissionKeyTakenError,
+  type CheckoutListing,
   type OperatorAlerts,
   type OrdersRepos,
   type PaymentMethod,
@@ -39,15 +40,24 @@ import {
   isWellFormedSubmissionKey,
   newResumeId,
 } from '../domain/consent';
-import { toQuoteRef, type ShippingService } from '../domain/quote';
-import { unavailableReason, type QuoteShipping } from './quote-shipping';
+import {
+  buildOptions,
+  checkSelection,
+  toQuoteRef,
+  type DeliveryPoint,
+  type ShippingService,
+} from '../domain/quote';
+import { originsOf, unavailableReason } from './quote-shipping';
+import type { ShippingOptionsFinder } from './shipping-options';
 
 export type StartCheckoutInput = {
   readonly slug: string;
   /** Campos del formulario tal como llegan (se validan aqui). */
   readonly fields: Readonly<Record<string, string>>;
   readonly acceptTerms: boolean;
-  readonly acceptedAlternative: boolean;
+  /** U8: servicio elegido (BR8-V1) y, si entrega en un punto, el punto (BR8-V3). */
+  readonly serviceId: string;
+  readonly pointId: string | undefined;
   /** Total que la compradora vio: solo para detectar cambios, nunca decide el cobro (BR3-TT4). */
   readonly expectedTotalCents: number | undefined;
   readonly submissionKey: string;
@@ -67,18 +77,16 @@ export type StartCheckoutResult =
       readonly trackingToken: string | undefined;
     }
   | { readonly kind: 'total_changed'; readonly totals: Totals; readonly service: ShippingService }
-  | {
-      readonly kind: 'alternative_required';
-      readonly totals: Totals;
-      readonly service: ShippingService;
-    }
   | { readonly kind: 'no_shipping' }
+  | { readonly kind: 'shipping_down' }
+  | { readonly kind: 'servicio_no_disponible' }
+  | { readonly kind: 'punto_no_disponible' }
   | { readonly kind: 'obra_no_disponible'; readonly reason: 'pausado' | 'vendido' | 'reservado' }
   | { readonly kind: 'provider_error' };
 
 export type StartCheckoutDeps = {
   readonly runner: TransactionRunner<OrdersRepos>;
-  readonly quoter: Pick<QuoteShipping, 'quoteFor'>;
+  readonly finder: Pick<ShippingOptionsFinder, 'services' | 'points' | 'reportUnavailable'>;
   readonly provider: Pick<PaymentProvider, 'createCheckoutSession' | 'getSession'>;
   readonly limiter: Pick<RateLimiter, 'check'>;
   readonly alerts: OperatorAlerts;
@@ -149,17 +157,32 @@ export class StartCheckout {
       return perListing;
     }
 
-    // Recotizar justo antes de cobrar (BR3-CT2) y comparar con lo que la compradora vio (BR3-TT3).
-    const quote = await deps.quoter.quoteFor(listing, buyer.value.postalCode, input.correlationId);
-    if (quote.kind === 'sin_envio') return ok({ kind: 'no_shipping' });
-    if (quote.kind === 'solo_alternativa' && !input.acceptedAlternative) {
-      return ok({ kind: 'alternative_required', totals: quote.totals, service: quote.service });
+    // Revalidar la eleccion justo antes de cobrar (BR8-V1 a V4, D-U8-2): sin estado; el servidor
+    // recalcula las opciones (casi siempre desde la cache) y valida servicio, punto y total.
+    const selection = await this.resolveSelection(
+      listing,
+      buyer.value.postalCode,
+      input.serviceId,
+      input.pointId,
+      input.correlationId,
+    );
+    if (selection.kind === 'servicio_no_disponible' || selection.kind === 'punto_no_disponible') {
+      await this.rejected(listing.id, selection.kind, input.correlationId);
+      return ok({ kind: selection.kind });
     }
-    if (input.expectedTotalCents !== quote.totals.totalCents) {
-      return ok({ kind: 'total_changed', totals: quote.totals, service: quote.service });
+    if (selection.kind === 'no_shipping') return ok({ kind: 'no_shipping' });
+    if (selection.kind === 'shipping_down') return ok({ kind: 'shipping_down' });
+    if (selection.kind === 'seleccion_invalida') {
+      await this.rejected(listing.id, 'seleccion_invalida', input.correlationId);
+      return err(appError('validation', { details: [{ field: 'pointId', reason: 'invalido' }] }));
     }
-    const totals = computeTotals(listing.priceCents, quote.service.priceCents);
+    if (selection.kind !== 'ok') return err(appError('internal'));
+    const { service, point } = selection;
+    const totals = computeTotals(listing.priceCents, service.priceCents);
     if (!totals.ok) return err(appError('internal'));
+    if (input.expectedTotalCents !== totals.value.totalCents) {
+      return ok({ kind: 'total_changed', totals: totals.value, service });
+    }
 
     const manual = input.method === 'manual';
     if (manual) {
@@ -202,14 +225,15 @@ export class StartCheckout {
         postalCode: buyer.value.postalCode,
         city: buyer.value.city,
         province: buyer.value.province,
+        point,
       },
-      effectiveModality: quote.service.modality,
-      alternativeAccepted: quote.service.modality !== listing.modality,
+      effectiveModality: service.modality,
+      alternativeAccepted: false,
       workPriceCents: totals.value.workPriceCents,
       shippingCents: totals.value.shippingCents,
       totalCents: totals.value.totalCents,
       commissionCents: 0,
-      quote: toQuoteRef(quote.service),
+      quote: toQuoteRef(service),
       consent: consentAt(now),
       checkoutSessionId: undefined,
       paymentIntentId: undefined,
@@ -329,6 +353,57 @@ export class StartCheckout {
       }
     });
     return ok({ kind: 'redirect', url, resumeId });
+  }
+
+  /** BR8-V1 a V4: servicio y punto contra las opciones y la lista de puntos actuales. */
+  private async resolveSelection(
+    listing: CheckoutListing,
+    postalCode: string,
+    serviceId: string,
+    pointId: string | undefined,
+    correlationId: string,
+  ): Promise<
+    | {
+        readonly kind: 'ok';
+        readonly service: ShippingService;
+        readonly point: DeliveryPoint | undefined;
+      }
+    | { readonly kind: 'servicio_no_disponible' | 'punto_no_disponible' | 'seleccion_invalida' }
+    | { readonly kind: 'no_shipping' | 'shipping_down' }
+  > {
+    const { finder } = this.deps;
+    const services = await finder.services(listing, postalCode, correlationId);
+    if (!services.ok) {
+      await finder.reportUnavailable(listing, postalCode, true, correlationId);
+      return { kind: 'shipping_down' };
+    }
+    const options = buildOptions(services.value, originsOf(listing));
+    if (options.preselected === undefined) {
+      await finder.reportUnavailable(listing, postalCode, false, correlationId);
+      return { kind: 'no_shipping' };
+    }
+    // Solo se piden los puntos si el servicio entrega en un punto y la peticion trae uno.
+    let points: readonly DeliveryPoint[] | undefined;
+    const wanted = [...options.groups.punto].find((s) => s.id === serviceId);
+    if (wanted !== undefined && pointId !== undefined && pointId !== '') {
+      const res = await finder.points(serviceId, postalCode, correlationId);
+      if (!res.ok) return { kind: 'shipping_down' };
+      points = res.value;
+    }
+    return checkSelection(options, serviceId, pointId, points);
+  }
+
+  private async rejected(listingId: string, reason: string, correlationId: string): Promise<void> {
+    await this.deps.audit.record({
+      actorType: 'buyer',
+      action: 'delivery_selection_rejected',
+      resourceType: 'listing',
+      resourceId: listingId,
+      outcome: 'denied',
+      correlationId,
+      details: { reason },
+    });
+    this.deps.logger.warn('selection_rejected', { correlationId, reason });
   }
 
   /** Stripe fallo: libera la reserva y cancela el pedido (BR3-RS4). Nunca lanza. */

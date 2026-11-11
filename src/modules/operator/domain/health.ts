@@ -79,6 +79,9 @@ export type HealthSignals = {
   /** Minutos que lleva esperando el trabajo pendiente mas antiguo; `undefined` si no hay ninguno. */
   readonly oldestPendingJobMinutes: number | undefined;
   readonly failedEmails: number;
+  /** U8: horas del borrador sin pagar mas antiguo y umbral de aviso (UNPAID_DRAFT_ALERT_HOURS). */
+  readonly oldestUnpaidDraftHours?: number | undefined;
+  readonly unpaidDraftAlertHours?: number | undefined;
   /** Horas desde la ultima copia conocida; `undefined` si no hay dato. */
   readonly backupAgeHours: number | undefined;
   readonly openCircuits: number;
@@ -128,6 +131,15 @@ export const healthStatus = (s: HealthSignals): { state: HealthState; reasons: s
   }
   if (s.failedJobs24h > 0) warn.push(`${s.failedJobs24h} trabajos fallidos en 24 horas`);
   if (s.failedEmails > 0) warn.push(`${s.failedEmails} correos fallidos`);
+  if (
+    s.oldestUnpaidDraftHours !== undefined &&
+    s.unpaidDraftAlertHours !== undefined &&
+    s.oldestUnpaidDraftHours >= s.unpaidDraftAlertHours
+  ) {
+    warn.push(
+      `Hay un borrador de envío sin pagar desde hace ${s.oldestUnpaidDraftHours} horas: págalo en Packlink PRO`,
+    );
+  }
   if (s.backupAgeHours !== undefined && s.backupAgeHours > BACKUP_WARN_HOURS) {
     warn.push(`La última copia tiene más de ${BACKUP_WARN_HOURS} horas`);
   }

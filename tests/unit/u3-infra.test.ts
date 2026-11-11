@@ -284,14 +284,18 @@ describe('PacklinkShippingAdapter (cliente resiliente)', () => {
       {
         id: '20001',
         name: 'Correos Paq Estandar',
+        carrier: 'Correos',
         modality: 'punto',
+        destination: 'domicilio',
         priceCents: 450,
         transitDays: 2,
       },
       {
         id: '2',
         name: 'Correos Paq Estandar',
+        carrier: 'Correos',
         modality: 'recogida',
+        destination: 'domicilio',
         priceCents: 620,
         transitDays: 2,
       },

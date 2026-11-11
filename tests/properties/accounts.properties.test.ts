@@ -288,6 +288,7 @@ describe('P-U2-12 pausa por restriccion de cobros', () => {
               fragile: false,
               size: 'M',
               modality: 'punto',
+              origins: ['punto'],
               status,
               pausedReason: status === 'pausado' ? 'artista' : undefined,
               orderId: undefined,

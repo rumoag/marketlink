@@ -12,6 +12,8 @@ export type ReminderDeps = {
   readonly alerts: OperatorAlerts;
   readonly clock: Clock;
   readonly ids: IdGenerator;
+  /** U8: horas sin pagar antes de avisar (UNPAID_DRAFT_ALERT_HOURS); por defecto 24. */
+  readonly payReminderHours?: number;
 };
 
 /** BR4-RC3: recordatorio a las 24 h y aviso al operador a las 72 h si no se eligio recogida. */
@@ -94,6 +96,9 @@ export class RemindPayLabel {
           remindedAt: s.payRemindedAt,
           status: s.status,
           now,
+          ...(this.deps.payReminderHours !== undefined
+            ? { thresholdMs: this.deps.payReminderHours * 3_600_000 }
+            : {}),
         })
       ) {
         continue;
