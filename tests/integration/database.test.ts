@@ -127,6 +127,34 @@ describeDb('Base de datos (Postgres real)', () => {
       expect(again.id).not.toBe(claimed?.id);
     });
 
+    it('el reclamo pone los trabajos de eventos antes que los periodicos (ADR 0030)', async () => {
+      const store = new PgJobStore(db);
+      const old = instantOf(Date.now() - 3_600_000);
+      const now = instantOf(Date.now());
+      for (let i = 0; i < 30; i++) {
+        await store.enqueue({ type: 'poll_shipments', dedupeKey: `p-${i}` }, old);
+      }
+      const event = await store.enqueue({ type: 'process_stripe_event', dedupeKey: 'ev' }, now);
+      const claimed = await store.claim(now, 25, LEASE_MS);
+      expect(claimed).toHaveLength(25);
+      expect(claimed[0]?.id).toBe(event.id);
+      expect(claimed.slice(1).every((j) => j.type === 'poll_shipments')).toBe(true);
+    });
+
+    it('un periodico con clave fija nunca tiene mas de un pendiente (la cola no crece si nadie consume)', async () => {
+      const store = new PgJobStore(db);
+      const now = instantOf(Date.now());
+      const ids = new Set<string>();
+      for (let minute = 0; minute < 50; minute++) {
+        const j = await store.enqueue(
+          { type: 'poll_shipments', dedupeKey: 'periodic:poll_shipments' },
+          instantOf(now + minute * 60_000),
+        );
+        ids.add(j.id);
+      }
+      expect(ids.size).toBe(1);
+    });
+
     it('reclamo exclusivo: 5 reclamos concurrentes reparten 20 trabajos sin duplicados (BR-J5)', async () => {
       const store = new PgJobStore(db);
       const now = instantOf(Date.now());

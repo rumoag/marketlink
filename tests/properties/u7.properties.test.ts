@@ -174,6 +174,7 @@ describe('P-U7-08 salud monótona', () => {
   const signals = fc.record({
     dbOk: fc.boolean(),
     failedJobs24h: fc.nat(5),
+    oldestPendingJobMinutes: fc.option(fc.integer({ min: 0, max: 90 }), { nil: undefined }),
     failedEmails: fc.nat(5),
     backupAgeHours: fc.option(fc.integer({ min: 0, max: 200 }), { nil: undefined }),
     openCircuits: fc.nat(4),
@@ -186,7 +187,7 @@ describe('P-U7-08 salud monótona', () => {
     fc.assert(
       fc.property(
         signals,
-        fc.integer({ min: 0, max: 5 }),
+        fc.integer({ min: 0, max: 6 }),
         fc.integer({ min: 1, max: 30 }),
         (s, which, delta) => {
           const worse: HealthSignals = (() => {
@@ -201,6 +202,11 @@ describe('P-U7-08 salud monótona', () => {
                 return { ...s, backupAgeHours: (s.backupAgeHours ?? 0) + delta };
               case 4:
                 return { ...s, openCircuits: s.openCircuits + delta };
+              case 5:
+                return {
+                  ...s,
+                  oldestPendingJobMinutes: (s.oldestPendingJobMinutes ?? 0) + delta,
+                };
               default:
                 return { ...s, quotasStale: true };
             }

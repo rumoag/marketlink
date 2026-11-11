@@ -68,6 +68,22 @@ describe('JobQueue (ejemplos)', () => {
     expect(summary.claimed).toBe(0);
   });
 
+  it('al reclamar, los trabajos de eventos pasan antes que los periodicos aunque sean mas nuevos (ADR 0030)', async () => {
+    const { store, queue, clock } = build();
+    for (let i = 0; i < 40; i++) {
+      await queue.enqueue({ type: 'poll_shipments', dedupeKey: `periodic-${i}` });
+    }
+    clock.advance(MS.minute);
+    const event = await queue.enqueue({ type: 'process_stripe_event', dedupeKey: 'evento' });
+    const payment = await queue.enqueue({ type: 'create_shipment_draft', dedupeKey: 'borrador' });
+    clock.advance(MS.minute);
+    const claimed = await store.claim(clock.now(), 25, LEASE_MS);
+    expect(claimed).toHaveLength(25);
+    // Los dos trabajos de eventos van los primeros del lote, delante de 40 periodicos mas viejos.
+    expect(claimed.slice(0, 2).map((j) => j.id)).toEqual([event.id, payment.id]);
+    expect(claimed.slice(2).every((j) => j.type === 'poll_shipments')).toBe(true);
+  });
+
   it('un error permanente va a failed de inmediato (BR-J3)', async () => {
     const { store, registry, queue } = build();
     registry.register('x', () =>

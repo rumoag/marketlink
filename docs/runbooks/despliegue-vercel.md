@@ -38,6 +38,14 @@ Se definen por entorno (Preview y Production) con `vercel env add NOMBRE <entorn
 3. Revisar en los registros de Vercel que las funciones corren en `fra1`.
 4. La subida de fotos usa `sharp`: confirmar que `POST /api/artista/fotos` responde con una foto real (límite de 30 s).
 
+## 3 bis. Dos cosas que hacen falta para que los pagos se procesen (verificado en sandbox, 2026-11-10)
+
+1. **Secretos del Vault de Supabase.** El reloj de la base (`pg_cron`, cada minuto) lee la URL y el secreto de la aplicación del Vault. Sin ellos, los avisos de Stripe se guardan pero los trabajos que dejan (marcar el pedido como pagado, crear el borrador del envío…) **no se procesan** y el comprador ve «esperando el pago». En el editor SQL de Supabase:
+   `select vault.create_secret('<APP_URL>', 'marketlink_app_url');` y `select vault.create_secret('<INTERNAL_JOBS_SECRET>', 'marketlink_jobs_secret');` (el mismo valor que en Vercel). Comprueba con `select jobname, schedule, active from cron.job;` (debe haber `marketlink-run-jobs`) y con `select status, left(return_message, 120) from cron.job_run_details order by start_time desc limit 5;` (estado `succeeded`).
+2. **Los destinos de eventos de Stripe deben crearse en el mismo entorno que la clave de la aplicación.** Comprueba que el identificador `acct_…` de la dirección del Dashboard coincide con el de la clave (`GET /v1/account` con la clave). Si no, Stripe cobra pero no avisa a nadie. Dos pistas de que están en otro entorno: `GET /v1/webhook_endpoints` sale vacío y los eventos recientes tienen `pending_webhooks: 0`.
+
+Con la migración `20261110100000_job_queue_hardening.sql` (ADR 0030) la cola ya no se acumula aunque el reloj no corra: hay como mucho un periódico pendiente por tipo, los eventos se reclaman antes que los periódicos y `/operador/salud` pasa a «Atención» si un trabajo listo lleva más de 5 minutos esperando. **Comprueba siempre tras desplegar** que `/api/health/deep` no trae `jobsOldestPendingSeconds` alto (más de 300 s lo pone en `degraded`). El disparo inmediato tras recibir el aviso es una mejora sobre el reloj de cada minuto.
+
 ## 4. Si falla el despliegue
 
 Ver `rollback.md`. Las migraciones de base de datos van aparte (flujo «Migraciones» de GitHub Actions, secreto `SUPABASE_DB_URL`).

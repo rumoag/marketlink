@@ -715,6 +715,25 @@ describe('Secretos y salud', () => {
     });
   });
 
+  it('la salud profunda se degrada si un trabajo listo lleva esperando mas de 5 minutos', async () => {
+    const dbWith = (seconds: string | null) => ({
+      query: (sql: string) =>
+        Promise.resolve({
+          rows: sql.includes('FROM jobs') ? [{ s: seconds }] : [{ n: '0' }],
+        } as never),
+    });
+    const ok = await deepHealth(dbWith('120'));
+    expect(ok.status).toBe('ok');
+    expect(ok.jobsOldestPendingSeconds).toBe(120);
+    const stuck = await deepHealth(dbWith('600'));
+    expect(stuck.status).toBe('degraded');
+    expect(stuck.jobsOldestPendingSeconds).toBe(600);
+    // Sin trabajos listos no hay dato y la salud sigue en orden.
+    const none = await deepHealth(dbWith(null));
+    expect(none.status).toBe('ok');
+    expect(none.jobsOldestPendingSeconds).toBeUndefined();
+  });
+
   it('la salud profunda entrega la causa del fallo de la base para dejarla en los registros', async () => {
     const causes: unknown[] = [];
     const cause = new Error('password authentication failed');

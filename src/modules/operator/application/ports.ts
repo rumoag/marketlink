@@ -75,6 +75,8 @@ export type PurgeCandidate = { readonly orderId: string };
 
 export type JobStats = {
   readonly failed24h: number;
+  /** Minutos del trabajo pendiente (ya listo para ejecutar) mas antiguo; `undefined` si no hay. */
+  readonly oldestPendingMinutes: number | undefined;
   readonly pending: number;
   readonly running: number;
 };

@@ -1,6 +1,6 @@
 import { instantOf, type Instant } from '@/modules/kernel/domain/clock';
 import type { JobStore } from '@/modules/jobs/application/job-queue';
-import { isTerminal, type Job, type NewJob } from '@/modules/jobs/domain/job';
+import { isPeriodicJob, isTerminal, type Job, type NewJob } from '@/modules/jobs/domain/job';
 
 /** Doble en memoria con la misma semantica que PgJobStore (mismas reglas, sin SQL). */
 export class MemoryJobStore implements JobStore {
@@ -35,7 +35,12 @@ export class MemoryJobStore implements JobStore {
   claim(now: Instant, limit: number, leaseMs: number): Promise<Job[]> {
     const ready = [...this.jobs.values()]
       .filter((j) => j.status === 'pending' && j.runAt <= now)
-      .sort((a, b) => a.runAt - b.runAt || a.createdAt - b.createdAt)
+      .sort(
+        (a, b) =>
+          Number(isPeriodicJob(a.type)) - Number(isPeriodicJob(b.type)) ||
+          a.runAt - b.runAt ||
+          a.createdAt - b.createdAt,
+      )
       .slice(0, limit);
     const claimed = ready.map((j): Job => {
       const next: Job = {

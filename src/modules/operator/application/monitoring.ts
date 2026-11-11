@@ -102,7 +102,12 @@ export type HealthView = {
   readonly state: HealthState;
   readonly reasons: readonly string[];
   readonly db: Section<boolean>;
-  readonly jobs: Section<{ failed24h: number; pending: number; running: number }>;
+  readonly jobs: Section<{
+    failed24h: number;
+    pending: number;
+    running: number;
+    oldestPendingMinutes: number | undefined;
+  }>;
   readonly emails: Section<{ pending: number; failed: number }>;
   readonly work: Section<{
     stuck: number;
@@ -192,6 +197,7 @@ export class GetHealth {
     const status = healthStatus({
       dbOk: db.ok && db.value,
       failedJobs24h: jobs.ok ? jobs.value.failed24h : 0,
+      oldestPendingJobMinutes: jobs.ok ? jobs.value.oldestPendingMinutes : undefined,
       failedEmails: emails.ok ? emails.value.failed : 0,
       backupAgeHours: backup.ok && backup.value ? backup.value.ageHours : undefined,
       openCircuits: circuits.ok ? circuits.value.filter((c) => c.state === 'open').length : 0,

@@ -76,3 +76,31 @@ export const resolveOutcome = (
 /** BR-J6: un bloqueo vencido consume el intento ya sumado al reclamar. */
 export const resolveExpiredLease = (job: Pick<Job, 'attempts'>, now: Instant): Resolution =>
   resolveOutcome(job, { ok: false, error: { retryable: true, message: 'lease_expired' } }, now);
+
+/**
+ * Trabajos que programa pg_cron. Al reclamar pasan DESPUES de los de eventos (pagos, envios,
+ * reembolsos): si el consumidor se para y se acumulan, no retrasan a los que tienen a alguien
+ * esperando (ADR 0030).
+ */
+export const PERIODIC_JOB_TYPES: readonly string[] = [
+  'poll_shipments',
+  'dispatch_notifications',
+  'retry_settlements',
+  'expire_stale_orders',
+  'withdraw_payout',
+  'remind_pickup',
+  'remind_pay_label',
+  'security_alerts',
+  'cleanup_rate_limit_counters',
+  'purge_unpaid_orders',
+  'reconcile_stripe',
+  'purge_labels_and_notifications',
+  'reconcile_ledger',
+  'recompute_balances',
+  'stale_deliveries',
+  'export_finance',
+  'purge_listing_views',
+  'purge_personal_data',
+];
+
+export const isPeriodicJob = (type: string): boolean => PERIODIC_JOB_TYPES.includes(type);

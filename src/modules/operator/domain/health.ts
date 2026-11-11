@@ -76,6 +76,8 @@ export type HealthState = 'verde' | 'ambar' | 'rojo';
 export type HealthSignals = {
   readonly dbOk: boolean;
   readonly failedJobs24h: number;
+  /** Minutos que lleva esperando el trabajo pendiente mas antiguo; `undefined` si no hay ninguno. */
+  readonly oldestPendingJobMinutes: number | undefined;
   readonly failedEmails: number;
   /** Horas desde la ultima copia conocida; `undefined` si no hay dato. */
   readonly backupAgeHours: number | undefined;
@@ -85,6 +87,9 @@ export type HealthSignals = {
   readonly live: boolean;
 };
 
+/** Un trabajo listo que espera mas de esto indica que el reloj o el consumidor de la cola no corren. */
+export const JOB_WAIT_WARN_MINUTES = 5;
+export const JOB_WAIT_CRITICAL_MINUTES = 30;
 export const BACKUP_WARN_HOURS = 36;
 export const BACKUP_CRITICAL_HOURS = 72;
 export const QUOTA_REVIEW_DAYS = 35;
@@ -103,8 +108,23 @@ export const healthStatus = (s: HealthSignals): { state: HealthState; reasons: s
   const critical: string[] = [];
   const warn: string[] = [];
   if (!s.dbOk) critical.push('La base de datos no responde');
+  if (
+    s.oldestPendingJobMinutes !== undefined &&
+    s.oldestPendingJobMinutes > JOB_WAIT_CRITICAL_MINUTES
+  ) {
+    critical.push(
+      `Hay un trabajo esperando desde hace más de ${JOB_WAIT_CRITICAL_MINUTES} minutos: la cola no se procesa`,
+    );
+  }
   if (s.live && s.backupAgeHours !== undefined && s.backupAgeHours > BACKUP_CRITICAL_HOURS) {
     critical.push(`La última copia tiene más de ${BACKUP_CRITICAL_HOURS} horas`);
+  }
+  if (
+    s.oldestPendingJobMinutes !== undefined &&
+    s.oldestPendingJobMinutes > JOB_WAIT_WARN_MINUTES &&
+    s.oldestPendingJobMinutes <= JOB_WAIT_CRITICAL_MINUTES
+  ) {
+    warn.push(`Hay un trabajo esperando desde hace ${s.oldestPendingJobMinutes} minutos`);
   }
   if (s.failedJobs24h > 0) warn.push(`${s.failedJobs24h} trabajos fallidos en 24 horas`);
   if (s.failedEmails > 0) warn.push(`${s.failedEmails} correos fallidos`);

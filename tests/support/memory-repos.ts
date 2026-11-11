@@ -82,7 +82,12 @@ export type MemState = {
   securityEvents: { action: string; at: number }[];
   alertLog: { code: string; bucket: string }[];
   backups: { at: number; sizeBytes: number }[];
-  jobStats: { failed24h: number; pending: number; running: number };
+  jobStats: {
+    failed24h: number;
+    pending: number;
+    running: number;
+    oldestPendingMinutes: number | undefined;
+  };
   auditRowsEstimate: number;
   dbDown: boolean;
 };
@@ -112,7 +117,7 @@ const emptyState = (): MemState => ({
   securityEvents: [],
   alertLog: [],
   backups: [],
-  jobStats: { failed24h: 0, pending: 0, running: 0 },
+  jobStats: { failed24h: 0, pending: 0, running: 0, oldestPendingMinutes: undefined },
   auditRowsEstimate: 0,
   dbDown: false,
   sizes: structuredClone([

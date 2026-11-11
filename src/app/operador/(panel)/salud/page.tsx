@@ -41,7 +41,11 @@ export default async function OperadorSaludPage() {
       key: 'jobs',
       label: 'Trabajos',
       value: h.jobs.ok ? (
-        `${h.jobs.value.failed24h} fallidos en 24 h · ${h.jobs.value.pending} pendientes · ${h.jobs.value.running} en curso`
+        `${h.jobs.value.failed24h} fallidos en 24 h · ${h.jobs.value.pending} pendientes · ${h.jobs.value.running} en curso${
+          h.jobs.value.oldestPendingMinutes !== undefined
+            ? ` · el más antiguo espera ${h.jobs.value.oldestPendingMinutes} min`
+            : ''
+        }`
       ) : (
         <NoDisponible />
       ),

@@ -197,15 +197,27 @@ export class PgOperatorRepository implements OperatorRepository {
   }
 
   async jobStats(now: number): Promise<JobStats> {
-    const res = await this.q.query<{ failed: string; pending: string; running: string }>(
+    const res = await this.q.query<{
+      failed: string;
+      pending: string;
+      running: string;
+      oldest: string | null;
+    }>(
       `SELECT count(*) FILTER (WHERE status = 'failed' AND updated_at >= $1)::text AS failed,
               count(*) FILTER (WHERE status = 'pending')::text AS pending,
-              count(*) FILTER (WHERE status = 'running')::text AS running
+              count(*) FILTER (WHERE status = 'running')::text AS running,
+              (extract(epoch FROM min(run_at) FILTER (WHERE status = 'pending' AND run_at <= $2))
+                * 1000)::bigint::text AS oldest
          FROM jobs`,
-      [ts(now - 24 * 3_600_000)],
+      [ts(now - 24 * 3_600_000), ts(now)],
     );
     const r = res.rows[0];
+    const oldest = r?.oldest !== null && r?.oldest !== undefined ? Number(r.oldest) : undefined;
     return {
+      oldestPendingMinutes:
+        oldest !== undefined && Number.isFinite(oldest)
+          ? Math.max(0, Math.floor((now - oldest) / 60_000))
+          : undefined,
       failed24h: Number(r?.failed ?? 0),
       pending: Number(r?.pending ?? 0),
       running: Number(r?.running ?? 0),

@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { MS } from '@/modules/kernel/domain/clock';
 import { unwrap } from '@/modules/kernel/domain/result';
 import type { Order } from '@/modules/orders/domain/order';
-import { AUDIT_ROWS_LIMIT } from '@/modules/operator/domain/health';
+import {
+  AUDIT_ROWS_LIMIT,
+  healthStatus,
+  JOB_WAIT_CRITICAL_MINUTES,
+  JOB_WAIT_WARN_MINUTES,
+} from '@/modules/operator/domain/health';
 import { OP_EMAIL, buildU7, deliver, paidU5Order, type U7 } from '@tests/support/u7-harness';
 
 const order = (u: U7, id: string): Order => u.db.state.orders.get(id) as Order;
@@ -235,7 +240,7 @@ describe('U7 pantalla de salud (EN-09)', () => {
 
   it('trabajos fallidos, correos fallidos, circuito abierto y cuotas sin revisar dan ámbar', async () => {
     const u = buildU7();
-    u.db.state.jobStats = { failed24h: 2, pending: 1, running: 0 };
+    u.db.state.jobStats = { failed24h: 2, pending: 1, running: 0, oldestPendingMinutes: undefined };
     u.setCircuits([{ provider: 'packlink', state: 'open' }]);
     u.setQuotasReviewedAt(u.clock.now() - 40 * MS.day);
     const v = unwrap(await u.health.execute(u.actor));
@@ -263,5 +268,34 @@ describe('U7 pantalla de salud (EN-09)', () => {
     const v = unwrap(await u.health.execute(u.actor));
     expect(JSON.stringify(v)).not.toMatch(/lucia@example|Calle Sol|op@example/);
     expect(OP_EMAIL).toBe('op@example.com');
+  });
+});
+
+describe('U7 salud: cola de trabajos parada (ADR 0030)', () => {
+  const base = {
+    dbOk: true,
+    failedJobs24h: 0,
+    oldestPendingJobMinutes: undefined,
+    failedEmails: 0,
+    backupAgeHours: 1,
+    openCircuits: 0,
+    quotasStale: false,
+    live: false,
+  } as const;
+
+  it('sin trabajos esperando, o con poca espera, es verde', () => {
+    expect(healthStatus(base).state).toBe('verde');
+    expect(healthStatus({ ...base, oldestPendingJobMinutes: JOB_WAIT_WARN_MINUTES }).state).toBe(
+      'verde',
+    );
+  });
+
+  it('un trabajo esperando mas de 5 minutos es ambar y mas de 30 es rojo, con el motivo', () => {
+    const warn = healthStatus({ ...base, oldestPendingJobMinutes: JOB_WAIT_WARN_MINUTES + 1 });
+    expect(warn.state).toBe('ambar');
+    expect(warn.reasons.join(' ')).toContain('esperando');
+    const crit = healthStatus({ ...base, oldestPendingJobMinutes: JOB_WAIT_CRITICAL_MINUTES + 1 });
+    expect(crit.state).toBe('rojo');
+    expect(crit.reasons.join(' ')).toContain('la cola no se procesa');
   });
 });

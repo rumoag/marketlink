@@ -2,6 +2,7 @@ import { instantOf, type Instant } from '@/modules/kernel/domain/clock';
 import type { Db } from '@/modules/platform/infrastructure/db-client';
 import type { JobStore } from '../application/job-queue';
 import type { Job, JobStatus, NewJob } from '../domain/job';
+import { PERIODIC_JOB_TYPES } from '../domain/job';
 
 type Row = {
   id: string;
@@ -76,7 +77,7 @@ export class PgJobStore implements JobStore {
       `WITH picked AS (
          SELECT id FROM jobs
          WHERE status = 'pending' AND run_at <= $1
-         ORDER BY run_at, created_at
+         ORDER BY (type = ANY($4::text[])), run_at, created_at
          LIMIT $2
          FOR UPDATE SKIP LOCKED
        )
@@ -85,7 +86,7 @@ export class PgJobStore implements JobStore {
        FROM picked
        WHERE j.id = picked.id
        RETURNING j.*`,
-      [ts(now), limit, ts(instantOf(now + leaseMs))],
+      [ts(now), limit, ts(instantOf(now + leaseMs)), PERIODIC_JOB_TYPES],
     );
     return res.rows.map(toJob);
   }
