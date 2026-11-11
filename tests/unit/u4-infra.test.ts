@@ -67,6 +67,7 @@ const draftInput = {
   serviceId: '20001',
   sender: {
     name: 'Ana Art',
+    email: 'ana@example.com',
     street: 'Calle Mayor',
     number: '12',
     floorDoor: '',
@@ -107,6 +108,31 @@ describe('PacklinkShipmentAdapter (cliente resiliente)', () => {
     expect(body.service_id).toBe('20001');
     expect(body.contentvalue).toBe(250);
     expect(body.collection_date).toBe('2026-11-10');
+  });
+
+  it('manda nombre, apellido y correo del remitente y del destinatario, que Packlink exige', async () => {
+    const server = fakeServer(() => json({ reference: 'PL123456' }));
+    unwrap(
+      await packlink(server).createDraft({
+        ...draftInput,
+        recipient: { ...draftInput.recipient, name: 'Rubén Moya Agustín' },
+      }),
+    );
+    const body = JSON.parse(server.calls[0]!.body) as {
+      from: Record<string, string>;
+      to: Record<string, string>;
+    };
+    expect(body.from).toMatchObject({ name: 'Ana', surname: 'Art', email: 'ana@example.com' });
+    expect(body.to).toMatchObject({
+      name: 'Rubén',
+      surname: 'Moya Agustín',
+      email: 'lucia@example.com',
+    });
+    for (const party of [body.from, body.to]) {
+      expect(party.name).not.toBe('');
+      expect(party.surname).not.toBe('');
+      expect(party.email).toContain('@');
+    }
   });
 
   it('un 500 se reintenta con la misma clave; un 4xx se rechaza sin reintento', async () => {

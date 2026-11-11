@@ -42,6 +42,8 @@ export type DraftInput = {
   readonly serviceId: string;
   readonly sender: {
     readonly name: string;
+    /** Packlink exige un correo del remitente (el de la artista). */
+    readonly email: string;
     readonly street: string;
     readonly number: string;
     readonly floorDoor: string;

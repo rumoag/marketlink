@@ -1,3 +1,4 @@
+import { splitFullName } from '../domain/names';
 import { appError, type AppError } from '@/modules/kernel/domain/app-error';
 import { instantOf, type Instant } from '@/modules/kernel/domain/clock';
 import { err, ok, type Result } from '@/modules/kernel/domain/result';
@@ -107,17 +108,20 @@ export class PacklinkShipmentAdapter implements ShipmentProvider {
       postalCode: string;
       city: string;
       phone: string;
-      email?: string;
-    }) => ({
-      name: p.name,
-      surname: '',
-      street1: p.street,
-      zip_code: p.postalCode,
-      city: p.city,
-      country: 'ES',
-      phone: p.phone,
-      ...(p.email ? { email: p.email } : {}),
-    });
+      email: string;
+    }) => {
+      const { name, surname } = splitFullName(p.name);
+      return {
+        name,
+        surname,
+        street1: p.street,
+        zip_code: p.postalCode,
+        city: p.city,
+        country: 'ES',
+        phone: p.phone,
+        email: p.email,
+      };
+    };
     const body = {
       from: party({
         name: input.sender.name,
@@ -125,6 +129,7 @@ export class PacklinkShipmentAdapter implements ShipmentProvider {
         postalCode: input.sender.postalCode,
         city: input.sender.city,
         phone: input.sender.phone,
+        email: input.sender.email,
       }),
       to: party({
         name: input.recipient.name,

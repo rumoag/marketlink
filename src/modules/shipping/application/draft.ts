@@ -58,11 +58,16 @@ export class CreateShipmentDraft {
       }
       if (shipment.status !== 'creando') return undefined;
       const listing = await repos.sales.findById(order.listingId);
-      return { order, shipment, listing };
+      const senderEmail = await repos.contacts.findEmail(order.artistId);
+      return { order, shipment, listing, senderEmail };
     });
     if (!ctx || !ctx.listing) return ok('skipped');
-    const { order, shipment, listing } = ctx;
+    const { order, shipment, listing, senderEmail } = ctx;
     if (!order.buyer || !order.destination) return ok('skipped'); // datos ya purgados
+    // Packlink exige un correo del remitente; sin el no se puede crear el borrador.
+    if (senderEmail === undefined) {
+      return this.failDraft(order, correlationId, final, appError('validation'));
+    }
 
     // 2. Recogida: hay que ofrecer fechas y esperar la eleccion.
     if (order.effectiveModality === 'recogida' && shipment.pickup === undefined) {
@@ -97,7 +102,7 @@ export class CreateShipmentDraft {
       const input: DraftInput = {
         reference: orderId,
         serviceId: shipment.serviceId,
-        sender: { name: order.snapshot.artisticName, ...order.sender },
+        sender: { name: order.snapshot.artisticName, email: senderEmail, ...order.sender },
         recipient: {
           name: order.buyer.name,
           email: order.buyer.email,

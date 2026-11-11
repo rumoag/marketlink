@@ -24,3 +24,15 @@ Un envío real completo entre dos direcciones del titular, con un paquete peque�
 - Aviso `etiqueta_no_descargada`: el pedido sigue en `borrador_creado`; revisar la etiqueta en Packlink.
 - Aviso `incidencia_envio`: el pedido está en `incidencia` sin reembolso automático; el operador decide en U6.
 - Aviso `borrador_sin_pagar`: pagar la etiqueta en Packlink PRO.
+
+## ¿Se puede pagar el borrador por API? (comprobado el 2026-11-11)
+
+**No con lo que ofrece hoy la API pública.** Contra la API real de Packlink, con la clave del operador y solo peticiones de lectura:
+
+- Solo existen `POST /v1/shipments` (crear borrador), `GET /v1/shipments` (lista) y `GET /v1/shipments/{referencia}`. Probados sin éxito (404): `/v1/payments`, `/v1/payment-methods`, `/v1/payment_methods`, `/v1/pro/payments`, `/v1/pro/shipments`, `/v1/billing`, `/v1/orders` y `/v1/cart`.
+- Un envío trae `state`, `purchase_date`, `labels` y `tracking_url`, pero ningún enlace ni acción de pago.
+- La ayuda de Packlink PRO describe el pago desde el panel web, con tarjeta o PayPal. No se encontró documentado un saldo prepago ni un pago por API.
+
+Un borrador sale como `AWAITING_COMPLETION` mientras le falta algún dato obligatorio (apellido o correo del remitente o del destinatario). Con la corrección del 2026-11-11 la app manda esos datos; **comprobar con el primer pedido nuevo que el estado ya no es `AWAITING_COMPLETION`**.
+
+Si se quiere automatizar el pago hay que preguntar a Packlink por un acuerdo de empresa (facturación mensual con compra por API) o valorar otro proveedor tras el puerto `ShipmentProvider`. Mientras tanto, el pago de la etiqueta es un paso manual del operador; en el panel de Packlink PRO se pueden pagar varios borradores de una vez.
