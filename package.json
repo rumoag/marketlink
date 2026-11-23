@@ -28,7 +28,7 @@
     "test:spike": "node --test scripts/spike/lib.test.mjs"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.119.0",
+    "@supabase/supabase-js": "2.119.2",
     "next": "16.4.5",
     "pdf-lib": "1.17.1",
     "pg": "8.23.1",
